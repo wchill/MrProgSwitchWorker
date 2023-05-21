@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+
+[project]
+name = "mr-prog-worker"
+authors = [
+    {name = "wchill"}
+]
+description = "Worker code for Mr. Prog Discord bot"
+requires-python = ">=3.8"
+version = "1.0"
+dependencies = [
+    "aio-pika",
+    "asyncio-mqtt",
+    "battle-network-automation"
+]
+
+[tool.setuptools]
+platforms = ["linux"]
+
+[tool.black]
+line-length = 120
+target-version = ['py38']
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+py_version = 38

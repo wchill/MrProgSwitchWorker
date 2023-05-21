@@ -12,7 +12,8 @@ version = "1.0"
 dependencies = [
     "aio-pika",
     "asyncio-mqtt",
-    "battle-network-automation"
+    "battle-network-automation",
+    "mr-prog-utils"
 ]
 
 [tool.setuptools]

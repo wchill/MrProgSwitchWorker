@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 DIR="$( dirname -- "${BASH_SOURCE[0]}"; )";   # Get the directory name
 DIR="$( realpath -e -- "$DIR"; )";    # Resolve its full path if need be
-SRC_DIR="$( realpath -e -- "$DIR/../../.."; )"
+AUTOMATION_SCRIPT_DIR="$DIR/BattleNetworkAutomation/src/nx/scripts"
 
 appendfile() {
   line=$1
@@ -35,11 +35,18 @@ sudo cmake . && sudo make -j 4 && sudo make install
 
 
 # TODO: create virtualenv and stuff
-if [[ ! -d "$SRC_DIR/venv" ]] ; then
+if [[ ! -d "$DIR/venv" ]] ; then
   echo "Creating python virtualenv"
   python3 -m pip install virtualenv
-  python3 -m virtualenv "$SRC_DIR/venv"
-  "$SRC_DIR/venv/bin/python" -m pip install -e "$SRC_DIR"
+  python3 -m virtualenv "$DIR/venv"
+  git clone https://github.com/wchill/BattleNetworkData
+  git clone https://github.com/wchill/BattleNetworkAutomation
+  git clone https://github.com/wchill/MrProgUtils
+  git clone https://github.com/wchill/MrProgSwitchWorker
+  "$DIR/venv/bin/python" -m pip install -e "$DIR/BattleNetworkData"
+  "$DIR/venv/bin/python" -m pip install -e "$DIR/BattleNetworkAutomation"
+  "$DIR/venv/bin/python" -m pip install -e "$DIR/MrProgUtils"
+  "$DIR/venv/bin/python" -m pip install -e "$DIR/MrProgSwitchWorker"
 fi
 
 echo "Writing udev rule for TC358743 HDMI module"
@@ -80,7 +87,7 @@ After=systemd-modules-load.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/env bash $DIR/init_tc358743.sh
+ExecStart=/usr/bin/env bash $AUTOMATION_SCRIPT_DIR/init_tc358743.sh
 ExecStop=/bin/true
 RemainAfterExit=true
 
@@ -122,7 +129,7 @@ WantedBy=multi-user.target
 EOF
 
 UNITFILE='/etc/systemd/system/usb-gadget.service'
-STARTUP_CMD="$SRC_DIR/venv/bin/python -u $DIR/start_server.py > /dev/null"
+STARTUP_CMD="$DIR/venv/bin/python $AUTOMATION_SCRIPT_DIR/start_server.py"
 echo "Writing usbgadget service file to $UNITFILE"
 cat << EOF | sudo tee $UNITFILE > /dev/null
 [Unit]
@@ -138,9 +145,9 @@ StandardOutput=journal+console
 WantedBy=sysinit.target
 EOF
 
-UNITFILE='/etc/systemd/system/discord-bot.service'
-STARTUP_CMD="$SRC_DIR/venv/bin/python -u $SRC_DIR/discord_bot.py > /dev/null"
-echo "Writing discord bot service file to $UNITFILE"
+UNITFILE='/etc/systemd/system/trade-worker.service'
+STARTUP_CMD="$DIR/venv/bin/python $DIR/MrProgSwitchWorker/src/mrprog/worker/trade_worker.py"
+echo "Writing trade worker service file to $UNITFILE"
 cat << EOF | sudo tee $UNITFILE > /dev/null
 [Unit]
 Description=Mr. Prog Switch Trade Worker

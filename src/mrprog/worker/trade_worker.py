@@ -19,6 +19,7 @@ from aio_pika.abc import (
 )
 from auto_trader import AutoTrader
 from mmbn.gamedata.chip import Chip
+from mrprog.utils.logging import install_logger
 from mrprog.utils.trade import TradeRequest, TradeResponse
 from nx.automation import image_processing
 from nx.controller import Button, Controller
@@ -308,6 +309,7 @@ async def main():
     parser.add_argument("--game", type=int)
     parser.parse_args()
 
+    install_logger(parser.host, parser.username, parser.password)
     worker = TradeWorker(
         ("127.0.0.1", 3000), parser.host, parser.username, parser.password, parser.platform, parser.game
     )

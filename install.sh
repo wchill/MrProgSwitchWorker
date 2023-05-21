@@ -12,6 +12,14 @@ appendfile() {
 sudo apt update
 sudo apt install -y raspberrypi-bootloader raspberrypi-kernel raspberrypi-kernel-headers git build-essential vim python3-pip tesseract-ocr ffmpeg cmake lsb-release curl
 
+read -p -r "Set current hostname to: ", HOSTNAME
+read -p -r "AMQP/MQTT host: ", HOST
+read -p -r "AMQP/MQTT username: ", USERNAME
+read -p -r "AMQP/MQTT password: ", PASSWORD
+read -p -r "Game: ", GAME
+
+sudo hostnamectl set-hostname "$HOSTNAME"
+
 # install tailscale
 curl -fsSL https://tailscale.com/install.sh | sh
 tailscale up
@@ -146,7 +154,7 @@ WantedBy=sysinit.target
 EOF
 
 UNITFILE='/etc/systemd/system/trade-worker.service'
-STARTUP_CMD="$DIR/venv/bin/python $DIR/MrProgSwitchWorker/src/mrprog/worker/trade_worker.py"
+STARTUP_CMD="$DIR/venv/bin/python $DIR/MrProgSwitchWorker/src/mrprog/worker/trade_worker.py --host $HOST --username $USERNAME --password $PASSWORD --platform switch --game $GAME"
 echo "Writing trade worker service file to $UNITFILE"
 cat << EOF | sudo tee $UNITFILE > /dev/null
 [Unit]

@@ -84,9 +84,8 @@ class TradeWorker:
             topic=f"worker/{self.worker_id}/hostname", payload=platform.node(), qos=1, retain=True
         )
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/address", payload=ip_address, qos=1, retain=True)
-        await self.mqtt_client.publish(
-            topic=f"worker/{self.worker_id}/game", payload=f"{self.system}.bn{self.game}", qos=1, retain=True
-        )
+        await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/system", payload=self.system, qos=1, retain=True)
+        await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/game", payload=self.game, qos=1, retain=True)
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/available", payload="1", qos=1, retain=True)
 
         self._mqtt_update_task = self.loop.create_task(self.handle_mqtt_updates())
@@ -116,7 +115,8 @@ class TradeWorker:
             username=mqtt_user,
             password=mqtt_pass,
             will=asyncio_mqtt.Will(topic=f"worker/{self.worker_id}/available", payload="0", qos=1, retain=True),
-            clean_session=True,
+            clean_session=False,
+            client_id={self.worker_id},
         )
         await self.mqtt_client.connect()
 
@@ -307,12 +307,10 @@ async def main():
     parser.add_argument("--password")
     parser.add_argument("--platform")
     parser.add_argument("--game", type=int)
-    parser.parse_args()
+    args = parser.parse_args()
 
-    install_logger(parser.host, parser.username, parser.password)
-    worker = TradeWorker(
-        ("127.0.0.1", 3000), parser.host, parser.username, parser.password, parser.platform, parser.game
-    )
+    install_logger(args.host, args.username, args.password)
+    worker = TradeWorker(("127.0.0.1", 3000), args.host, args.username, args.password, args.platform, args.game)
     await worker.run()
 
 

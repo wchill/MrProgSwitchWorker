@@ -12,11 +12,11 @@ appendfile() {
 sudo apt update
 sudo apt install -y raspberrypi-bootloader raspberrypi-kernel raspberrypi-kernel-headers git build-essential vim python3-pip tesseract-ocr ffmpeg cmake lsb-release curl
 
-read -p -r "Set current hostname to: ", HOSTNAME
-read -p -r "AMQP/MQTT host: ", HOST
-read -p -r "AMQP/MQTT username: ", USERNAME
-read -p -r "AMQP/MQTT password: ", PASSWORD
-read -p -r "Game: ", GAME
+read -p "Set current hostname to: " -r HOSTNAME
+read -p "AMQP/MQTT host: " -r HOST
+read -p "AMQP/MQTT username: " -r USERNAME
+read -p "AMQP/MQTT password: " -r -s PASSWORD
+read -p "Game: " -r GAME
 
 sudo hostnamectl set-hostname "$HOSTNAME"
 

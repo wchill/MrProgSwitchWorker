@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import logging
 import platform
 from typing import Tuple
@@ -58,12 +59,16 @@ class TradeWorker:
         self._mqtt_connection_info = (host, username, password)
         self._mqtt_update_task = None
 
-        self.worker_id = f"{hash(platform.node()):x}"
+        self.worker_id = hashlib.sha256(platform.node().encode("utf-8")).hexdigest()
+        self.loop = asyncio.get_running_loop()
+
+        self.cached_messages = {}
 
     async def handle_mqtt_updates(self) -> None:
         async with self.mqtt_client.messages() as messages:
             await self.mqtt_client.subscribe(f"enabled/{self.system}/{self.game}")
             async for message in messages:
+                self.cached_messages[message.topic] = message.payload
                 if message.topic.matches(f"enabled/{self.system}/{self.game}"):
                     enabled = bool(message.body)
                     if not enabled:
@@ -85,10 +90,12 @@ class TradeWorker:
         )
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/address", payload=ip_address, qos=1, retain=True)
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/system", payload=self.system, qos=1, retain=True)
-        await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/game", payload=self.game, qos=1, retain=True)
+        await self.mqtt_client.publish(
+            topic=f"worker/{self.worker_id}/game", payload=str(self.game), qos=1, retain=True
+        )
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/available", payload="1", qos=1, retain=True)
 
-        self._mqtt_update_task = self.loop.create_task(self.handle_mqtt_updates())
+        await self.handle_mqtt_updates()
 
     async def run(self) -> None:
         self.sink = SocketSink(self.controller_server[0], self.controller_server[1])
@@ -116,7 +123,7 @@ class TradeWorker:
             password=mqtt_pass,
             will=asyncio_mqtt.Will(topic=f"worker/{self.worker_id}/available", payload="0", qos=1, retain=True),
             clean_session=False,
-            client_id={self.worker_id},
+            client_id=self.worker_id,
         )
         await self.mqtt_client.connect()
 
@@ -140,7 +147,7 @@ class TradeWorker:
         self.task_queue = task_queue
 
         self.notification_queue = await self.channel.declare_queue(name="trade_status_update", durable=True)
-        await self.update_mqtt_info()
+        self._mqtt_update_task = self.loop.create_task(self.update_mqtt_info())
 
     async def on_trade_request(self, message: AbstractIncomingMessage) -> None:
         try:
@@ -312,6 +319,8 @@ async def main():
     install_logger(args.host, args.username, args.password)
     worker = TradeWorker(("127.0.0.1", 3000), args.host, args.username, args.password, args.platform, args.game)
     await worker.run()
+
+    await worker.process_trade_queue()
 
 
 if __name__ == "__main__":

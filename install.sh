@@ -10,7 +10,7 @@ appendfile() {
 }
 
 sudo apt update
-sudo apt install -y raspberrypi-bootloader raspberrypi-kernel raspberrypi-kernel-headers git build-essential vim python3-pip tesseract-ocr ffmpeg cmake lsb-release curl
+sudo apt install -y raspberrypi-bootloader raspberrypi-kernel raspberrypi-kernel-headers git build-essential vim python3-pip tesseract-ocr ffmpeg cmake lsb-release curl dkms libaio-dev libevdev-dev
 
 read -p "Set current hostname to: " -r HOSTNAME
 read -p "AMQP/MQTT host: " -r HOST
@@ -21,13 +21,13 @@ read -p "Game: " -r GAME
 sudo hostnamectl set-hostname "$HOSTNAME"
 
 # install tailscale
-curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up
+curl -fsSL https://tailscale.com/install.sh | sudo sh
+sudo tailscale up
 
 v4l2version=0.12.7
 xpadversion=0.4
 sudo rm -rf /usr/src/v4l2loopback-${v4l2version}
-sudo git clone https://github.com/umlaeute/v4l2loopback.git /usr/src/v4l2loopback-${xpadversion}
+sudo git clone https://github.com/umlaeute/v4l2loopback.git /usr/src/v4l2loopback-${v4l2version}
 sudo dkms remove -m v4l2loopback -v ${v4l2version} --all
 sudo dkms add -m v4l2loopback -v ${v4l2version}
 sudo dkms build -m v4l2loopback -v ${v4l2version}
@@ -41,8 +41,7 @@ sudo git clone https://github.com/mpromonet/v4l2rtspserver.git /usr/src/v4l2rtsp
 cd /usr/src/v4l2rtspserver || exit
 sudo cmake . && sudo make -j 4 && sudo make install
 
-
-# TODO: create virtualenv and stuff
+cd "$DIR" || exit
 if [[ ! -d "$DIR/venv" ]] ; then
   echo "Creating python virtualenv"
   python3 -m pip install virtualenv
@@ -58,7 +57,7 @@ if [[ ! -d "$DIR/venv" ]] ; then
 fi
 
 echo "Writing udev rule for TC358743 HDMI module"
-echo 'KERNEL=="video[0-9]*", SUBSYSTEM=="video4linux", KERNELS=="fe801000.csi|fe801000.csi1", ATTR{name}=="unicam-image", SYMLINK+="hdmi-capture", TAG+="systemd"' > /usr/lib/udev/rules.d/90-tc358743.rules
+sudo bash -c "echo 'KERNEL==\"video[0-9]*\", SUBSYSTEM==\"video4linux\", KERNELS==\"fe801000.csi|fe801000.csi1\", ATTR{name}==\"unicam-image\", SYMLINK+=\"hdmi-capture\", TAG+=\"systemd\"' > /usr/lib/udev/rules.d/90-tc358743.rules"
 
 # Load the needed modules on boot
 TEXT='dtoverlay=dwc2'
@@ -169,11 +168,11 @@ StandardOutput=journal+console
 [Install]
 WantedBy=sysinit.target
 EOF
-systemctl daemon-reload
-systemctl enable usb-gadget
-systemctl enable tc358743
-systemctl enable v4l2loopback
-systemctl enable v4l2rtspserver
-systemctl enable trade-worker
+sudo systemctl daemon-reload
+sudo systemctl enable usb-gadget
+sudo systemctl enable tc358743
+sudo systemctl enable v4l2loopback
+sudo systemctl enable v4l2rtspserver
+sudo systemctl enable trade-worker
 
 echo "Setup done, you might need to reboot"

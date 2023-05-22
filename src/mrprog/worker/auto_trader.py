@@ -96,12 +96,12 @@ class AutoTrader(Script):
 
         # TODO: Test BN3
         chip_list, ncp_list = MODULES[game]
-        ncp_list = ncp_list.ALL_PARTS
         ncp_nothing = ncp_list.NOTHING
+        all_parts = ncp_list.ALL_PARTS
         tradable_chip_order = chip_list.TRADABLE_CHIP_ORDER
 
         self.root_chip_node = self.build_all_chip_input_graphs(tradable_chip_order)
-        self.root_ncp_node = self.build_ncp_input_graph(ncp_list, ncp_nothing)
+        self.root_ncp_node = self.build_ncp_input_graph(all_parts, ncp_nothing)
 
     @staticmethod
     def build_all_chip_input_graphs(tradable_chip_order) -> Node[Chip]:
@@ -133,6 +133,16 @@ class AutoTrader(Script):
 
     def calculate_ncp_inputs(self, ncp: NaviCustPart) -> List[Tuple[Union[Button, DPad], Node[NaviCustPart]]]:
         return self.root_ncp_node.search(ncp)
+
+    async def connect_controller(self) -> None:
+        if (
+            image_processing.run_tesseract_line(image_processing.capture(), (1000, 1000), (460, 460))
+            == "Controller Not Connecting"
+        ):
+            logger.debug("Found controller connect screen, connecting")
+            self.controller.press_button(Button.L + Button.R, hold_ms=100, wait_ms=2000)
+            self.controller.press_button(Button.A, hold_ms=100, wait_ms=2000)
+            await self.controller.wait_for_inputs()
 
     def reload_save(self):
         self.home(wait_time=1000)

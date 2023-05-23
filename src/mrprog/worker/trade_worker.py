@@ -23,7 +23,7 @@ from mmbn.gamedata.chip import Chip
 from mrprog.utils.logging import install_logger
 from mrprog.utils.trade import TradeRequest, TradeResponse
 from nx.automation import image_processing
-from nx.controller import Button, Controller
+from nx.controller import Button, Controller, DPad
 from nx.controller.sinks import SocketSink
 
 logger = logging.getLogger(__name__)
@@ -36,11 +36,15 @@ class TradeWorker:
     mqtt_client: asyncio_mqtt.Client
 
     amqp_connection: AbstractRobustConnection
-    channel: AbstractChannel
+    trade_channel: AbstractChannel
     task_queue: AbstractQueue
     notification_queue: AbstractQueue
     loop: asyncio.AbstractEventLoop
-    exchange: AbstractExchange
+    trade_exchange: AbstractExchange
+
+    control_exchange: AbstractExchange
+    control_channel: AbstractChannel
+    control_queue: AbstractQueue
 
     trader: AutoTrader
     controller: Controller
@@ -63,18 +67,61 @@ class TradeWorker:
         self.loop = asyncio.get_running_loop()
 
         self.cached_messages = {}
+        self.last_seen_id = 0
+
+        self.trade_lock = asyncio.Lock()
 
     async def handle_mqtt_updates(self) -> None:
+        game_enabled = False
+        worker_enabled = False
+        task_queue_consumed = False
+
         async with self.mqtt_client.messages() as messages:
-            await self.mqtt_client.subscribe(f"enabled/{self.system}/{self.game}")
+            await self.mqtt_client.subscribe(f"game/{self.system}/{self.game}/enabled")
+            await self.mqtt_client.subscribe(f"worker/{self.worker_id}/enabled")
             async for message in messages:
                 self.cached_messages[message.topic] = message.payload
-                if message.topic.matches(f"enabled/{self.system}/{self.game}"):
-                    enabled = bool(message.body)
-                    if not enabled:
-                        await self.task_queue.cancel(consumer_tag=self.worker_id)
+                if message.topic.matches(f"game/{self.system}/{self.game}/enabled"):
+                    game_enabled = message.payload == b"1"
+                elif message.topic.matches(f"worker/{self.worker_id}/enabled"):
+                    worker_enabled = message.payload == b"1"
+
+                if task_queue_consumed != (game_enabled and worker_enabled):
+                    task_queue_consumed = game_enabled and worker_enabled
+                    if not task_queue_consumed:
+                        logger.info("Disabling task queue")
+                        await self.task_queue.cancel(consumer_tag=f"{self.worker_id}_taskqueue")
                     else:
-                        await self.task_queue.consume(self.on_trade_request, no_ack=False, consumer_tag=self.worker_id)
+                        logger.info("Enabling task queue")
+                        await self.task_queue.consume(
+                            self.on_trade_request, no_ack=False, consumer_tag=f"{self.worker_id}_taskqueue"
+                        )
+
+    async def on_control_request(self, message: AbstractIncomingMessage) -> None:
+        logger.info(f"Received control request: {message.body}")
+        try:
+            inputs = message.body.decode("utf-8").split(",")
+            for input_str in inputs:
+                input_info = input_str.split(" ")
+                if len(input_info) == 3:
+                    wait_ms = int(input_info[2])
+                    hold_ms = int(input_info[1])
+                elif len(input_info) == 2:
+                    wait_ms = None
+                    hold_ms = int(input_info[1])
+                else:
+                    wait_ms = None
+                    hold_ms = 80
+
+                try:
+                    button = Button.from_str(input_info[0])
+                    self.controller.press_button(button, hold_ms, wait_ms)
+                except KeyError:
+                    dpad = DPad.from_str(input_info[0])
+                    self.controller.press_dpad(dpad, hold_ms, wait_ms)
+            await self.controller.wait_for_inputs()
+        except Exception:
+            logger.exception("Processing error for message %r", message)
 
     async def update_mqtt_info(self) -> None:
         interfaces = psutil.net_if_addrs()
@@ -111,11 +158,12 @@ class TradeWorker:
             image_processing.run_tesseract_line(image_processing.capture(), (1000, 1000), (460, 460))
             == "Controller Not Connecting"
         ):
-            print("Found controller connect screen, connecting")
+            logger.info("Found controller connect screen, connecting")
             self.controller.press_button(Button.L + Button.R, hold_ms=100, wait_ms=2000)
             self.controller.press_button(Button.A, hold_ms=100, wait_ms=2000)
             await self.controller.wait_for_inputs()
 
+        logger.info("Connecting to mqtt/amqp")
         mqtt_host, mqtt_user, mqtt_pass = self._mqtt_connection_info
         self.mqtt_client = asyncio_mqtt.Client(
             hostname=mqtt_host,
@@ -131,45 +179,55 @@ class TradeWorker:
             self._amqp_connection_str,
             loop=self.loop,
         )
-        self.channel = await self.amqp_connection.channel()
+        self.trade_channel = await self.amqp_connection.channel()
+        self.control_channel = await self.amqp_connection.channel()
 
         # Declare an exchange
-        self.exchange = await self.channel.declare_exchange(
-            name="trade_requests",
-            type=aio_pika.ExchangeType.TOPIC,
+        self.trade_exchange = await self.trade_channel.declare_exchange(
+            name="trade_requests", type=aio_pika.ExchangeType.TOPIC, durable=True
+        )
+        self.control_exchange = await self.control_channel.declare_exchange(
+            name="control_requests", type=aio_pika.ExchangeType.TOPIC, durable=True
         )
 
         # Declaring queues
-        task_queue = await self.channel.declare_queue(
+        task_queue = await self.trade_channel.declare_queue(
             name=f"{self.system}_bn{self.game}_task_queue", durable=True, arguments={"x-max-priority": 100}
         )
-        await task_queue.bind(self.exchange, routing_key=f"requests.{self.system}.bn{self.game}")
+        await task_queue.bind(self.trade_exchange, routing_key=f"requests.{self.system}.bn{self.game}")
         self.task_queue = task_queue
 
-        self.notification_queue = await self.channel.declare_queue(name="trade_status_update", durable=True)
-        self._mqtt_update_task = self.loop.create_task(self.update_mqtt_info())
+        control_queue = await self.control_channel.declare_queue(
+            name=f"control_queue_{self.worker_id[:8]}", exclusive=True
+        )
+        await control_queue.bind(self.control_exchange, routing_key=f"control.{self.worker_id}")
+        self.control_queue = control_queue
+        await self.control_queue.consume(self.on_control_request, no_ack=True)
+
+        self.notification_queue = await self.trade_channel.declare_queue(name="trade_status_update", durable=True)
+
+        logger.info("Going into mqtt update loop")
+        await self.update_mqtt_info()
 
     async def on_trade_request(self, message: AbstractIncomingMessage) -> None:
-        try:
-            async with message.process(requeue=False):
-                assert message.reply_to is not None
+        async with self.trade_lock:
+            try:
+                async with message.process(requeue=True, ignore_processed=True):
+                    assert message.reply_to is not None
 
-                request = TradeRequest.from_bytes(message.body)
-                print(f"Received request: {request.trade_id}")
+                    request = TradeRequest.from_bytes(message.body)
+                    logger.info(f"Received request: {request.trade_id} - {request.trade_item}")
+                    if self.last_seen_id > request.trade_id and not message.redelivered:
+                        logger.info(f"Skipping message: {self.last_seen_id} > {request.trade_id}")
+                        await message.ack()
+                        return
+                    elif self.last_seen_id < request.trade_id and not message.redelivered:
+                        self.last_seen_id = request.trade_id
 
-                room_code_future = asyncio.Future()
-                if isinstance(request.trade_item, Chip):
-                    trade_completed = self.trader.trade_chip(request, room_code_future)
-                else:
-                    trade_completed = self.trader.trade_ncp(request, room_code_future)
-
-                try:
-                    image_bytestring = await room_code_future
                     response = TradeResponse(
-                        request, self.worker_id, TradeResponse.IN_PROGRESS, message="Room code", image=image_bytestring
+                        request, self.worker_id, TradeResponse.IN_PROGRESS, message=None, image=None
                     )
-                    print(f"Sending room code to {message.reply_to}")
-                    await self.exchange.publish(
+                    await self.trade_exchange.publish(
                         Message(
                             body=response.to_bytes(),
                             content_type="application/json",
@@ -177,10 +235,56 @@ class TradeWorker:
                         ),
                         routing_key=message.reply_to,
                     )
-                except asyncio.CancelledError:
+
+                    room_code_future = asyncio.Future()
+                    if isinstance(request.trade_item, Chip):
+                        trade_completed = asyncio.create_task(self.trader.trade_chip(request, room_code_future))
+                    else:
+                        trade_completed = asyncio.create_task(self.trader.trade_ncp(request, room_code_future))
+
+                    logger.info("Waiting for room code")
+                    try:
+                        image_bytestring = await room_code_future
+                        response = TradeResponse(
+                            request,
+                            self.worker_id,
+                            TradeResponse.IN_PROGRESS,
+                            message="Room code",
+                            image=image_bytestring,
+                        )
+                        logger.info(f"Sending room code to {message.reply_to}")
+                        await self.trade_exchange.publish(
+                            Message(
+                                body=response.to_bytes(),
+                                content_type="application/json",
+                                correlation_id=message.correlation_id,
+                            ),
+                            routing_key=message.reply_to,
+                        )
+                    except asyncio.CancelledError:
+                        trade_result, trader_message = await trade_completed
+                        response = TradeResponse(request, self.worker_id, trade_result, message=trader_message)
+                        await self.trade_exchange.publish(
+                            Message(
+                                body=response.to_bytes(),
+                                content_type="application/json",
+                                correlation_id=message.correlation_id,
+                            ),
+                            routing_key=message.reply_to,
+                        )
+                        if trade_result in [TradeResponse.SUCCESS, TradeResponse.CANCELLED, TradeResponse.USER_TIMEOUT]:
+                            await message.ack()
+                        else:
+                            await message.nack(requeue=True)
+                            await self.mqtt_client.publish(
+                                topic=f"worker/{self.worker_id}/enabled", payload=0, qos=1, retain=True
+                            )
+                        return
                     trade_result, trader_message = await trade_completed
+
                     response = TradeResponse(request, self.worker_id, trade_result, message=trader_message)
-                    await self.exchange.publish(
+                    logger.info(f"Sending finish message to {message.reply_to}")
+                    await self.trade_exchange.publish(
                         Message(
                             body=response.to_bytes(),
                             content_type="application/json",
@@ -192,119 +296,16 @@ class TradeWorker:
                         await message.ack()
                     else:
                         await message.nack(requeue=True)
-                    return
-
-                response = TradeResponse(
-                    request, self.worker_id, TradeResponse.IN_PROGRESS, message="Room code", image=image_bytestring
-                )
-                print(f"Sending room code to {message.reply_to}")
-                await self.exchange.publish(
-                    Message(
-                        body=response.to_bytes(),
-                        content_type="application/json",
-                        correlation_id=message.correlation_id,
-                    ),
-                    routing_key=message.reply_to,
-                )
-
-                trade_result, trader_message = await trade_completed
-
-                response = TradeResponse(request, self.worker_id, trade_result, message=trader_message)
-                print(f"Sending finish message to {message.reply_to}")
-                await self.exchange.publish(
-                    Message(
-                        body=response.to_bytes(),
-                        content_type="application/json",
-                        correlation_id=message.correlation_id,
-                    ),
-                    routing_key=message.reply_to,
-                )
-                if trade_result in [TradeResponse.SUCCESS, TradeResponse.CANCELLED, TradeResponse.USER_TIMEOUT]:
-                    await message.ack()
-                else:
-                    await message.nack(requeue=True)
-        except Exception:
-            logging.exception("Processing error for message %r", message)
-            await message.nack(requeue=True)
-
-    async def process_trade_queue(self):
-        async with self.task_queue.iterator() as qiterator:
-            message: AbstractIncomingMessage
-            async for message in qiterator:
-                try:
-                    async with message.process(requeue=False):
-                        assert message.reply_to is not None
-
-                        request = TradeRequest.from_bytes(message.body)
-                        print(f"Received request: {request.trade_id}")
-
-                        room_code_future = asyncio.Future()
-                        if isinstance(request.trade_item, Chip):
-                            trade_completed = self.trader.trade_chip(request, room_code_future)
-                        else:
-                            trade_completed = self.trader.trade_ncp(request, room_code_future)
-
-                        try:
-                            image_bytestring = await room_code_future
-                            response = TradeResponse(
-                                request,
-                                self.worker_id,
-                                TradeResponse.IN_PROGRESS,
-                                message="Room code",
-                                image=image_bytestring,
-                            )
-                            print(f"Sending room code to {message.reply_to}")
-                            await self.exchange.publish(
-                                Message(
-                                    body=response.to_bytes(),
-                                    content_type="application/json",
-                                    correlation_id=message.correlation_id,
-                                ),
-                                routing_key=message.reply_to,
-                            )
-                        except asyncio.CancelledError:
-                            trade_result, trader_message = await trade_completed
-                            response = TradeResponse(request, self.worker_id, trade_result, message=trader_message)
-                            await self.exchange.publish(
-                                Message(
-                                    body=response.to_bytes(),
-                                    content_type="application/json",
-                                    correlation_id=message.correlation_id,
-                                ),
-                                routing_key=message.reply_to,
-                            )
-                            continue
-
-                        response = TradeResponse(
-                            request,
-                            self.worker_id,
-                            TradeResponse.IN_PROGRESS,
-                            message="Room code",
-                            image=image_bytestring,
+                        await self.mqtt_client.publish(
+                            topic=f"worker/{self.worker_id}/enabled", payload=0, qos=1, retain=True
                         )
-                        print(f"Sending room code to {message.reply_to}")
-                        await self.exchange.publish(
-                            Message(
-                                body=response.to_bytes(),
-                                content_type="application/json",
-                                correlation_id=message.correlation_id,
-                            ),
-                            routing_key=message.reply_to,
-                        )
+            except Exception as e:
+                logger.exception("Processing error for message %r", message)
+                import traceback
 
-                        response = TradeResponse(request, self.worker_id, TradeResponse.SUCCESS, message="OK")
-                        print(f"Sending finish message to {message.reply_to}")
-                        await self.exchange.publish(
-                            Message(
-                                body=response.to_bytes(),
-                                content_type="application/json",
-                                correlation_id=message.correlation_id,
-                            ),
-                            routing_key=message.reply_to,
-                        )
-                        print("Request complete")
-                except Exception:
-                    logging.exception("Processing error for message %r", message)
+                traceback.print_exc()
+                await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/enabled", payload=0, qos=1, retain=True)
+                await message.nack(requeue=True)
 
 
 async def main():
@@ -319,8 +320,6 @@ async def main():
     install_logger(args.host, args.username, args.password)
     worker = TradeWorker(("127.0.0.1", 3000), args.host, args.username, args.password, args.platform, args.game)
     await worker.run()
-
-    await worker.process_trade_queue()
 
 
 if __name__ == "__main__":

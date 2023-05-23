@@ -326,7 +326,7 @@ class AutoTrader(Script):
             self.a()
             self.a()
 
-            logger.debug("Waiting for room code")
+            logger.debug("Searching for room code")
             if not self.wait_for_text(lambda ocr_text: ocr_text.startswith("Room Code: "), (1242, 89), (365, 54), 15):
                 room_code_future.cancel()
                 return TradeResponse.CRITICAL_FAILURE, "Unable to retrieve room code."
@@ -342,6 +342,7 @@ class AutoTrader(Script):
             start_time = time.time()
             logger.debug("Waiting 180s for user")
             while time.time() < start_time + 180:
+                await asyncio.sleep(1)
                 error = image_processing.run_tesseract_line(image_processing.capture(), (660, 440), (620, 50))
                 """
                 if self.check_for_cancel(trade_cancelled, discord_context.user_id):
@@ -395,6 +396,14 @@ class AutoTrader(Script):
                                     "I think the trade was successful, but something broke.",
                                 )
                         else:
+                            error = image_processing.run_tesseract_line(
+                                image_processing.capture(), (660, 440), (620, 50)
+                            )
+                            if error == "The guest has already left.":
+                                self.wait(12000)
+                                self.b(wait_time=1000)
+                                self.a(wait_time=1000)
+                                return TradeResponse.CANCELLED, "User left the room, trade cancelled."
                             return TradeResponse.CRITICAL_FAILURE, "Trade failed due to an unexpected state."
 
             self.b(wait_time=1000)

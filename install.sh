@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-DIR="$( dirname -- "${BASH_SOURCE[0]}"; )";   # Get the directory name
-DIR="$( realpath -e -- "$DIR"; )";    # Resolve its full path if need be
-AUTOMATION_SCRIPT_DIR="$DIR/BattleNetworkAutomation/src/nx/scripts"
+AUTOMATION_SCRIPT_DIR="$HOME/BattleNetworkAutomation/src/nx/scripts"
 
 appendfile() {
   line=$1
@@ -41,19 +39,19 @@ sudo git clone https://github.com/mpromonet/v4l2rtspserver.git /usr/src/v4l2rtsp
 cd /usr/src/v4l2rtspserver || exit
 sudo cmake . && sudo make -j 4 && sudo make install
 
-cd "$DIR" || exit
-if [[ ! -d "$DIR/venv" ]] ; then
+cd "$HOME" || exit
+if [[ ! -d "$HOME/venv" ]] ; then
   echo "Creating python virtualenv"
   python3 -m pip install virtualenv
-  python3 -m virtualenv "$DIR/venv"
+  python3 -m virtualenv "$HOME/venv"
   git clone https://github.com/wchill/BattleNetworkData
   git clone https://github.com/wchill/BattleNetworkAutomation
   git clone https://github.com/wchill/MrProgUtils
   git clone https://github.com/wchill/MrProgSwitchWorker
-  "$DIR/venv/bin/python" -m pip install -e "$DIR/BattleNetworkData"
-  "$DIR/venv/bin/python" -m pip install -e "$DIR/BattleNetworkAutomation"
-  "$DIR/venv/bin/python" -m pip install -e "$DIR/MrProgUtils"
-  "$DIR/venv/bin/python" -m pip install -e "$DIR/MrProgSwitchWorker"
+  "$HOME/venv/bin/python" -m pip install -e "$HOME/BattleNetworkData"
+  "$HOME/venv/bin/python" -m pip install -e "$HOME/BattleNetworkAutomation"
+  "$HOME/venv/bin/python" -m pip install -e "$HOME/MrProgUtils"
+  "$HOME/venv/bin/python" -m pip install -e "$HOME/MrProgSwitchWorker"
 fi
 
 echo "Writing udev rule for TC358743 HDMI module"
@@ -136,7 +134,7 @@ WantedBy=multi-user.target
 EOF
 
 UNITFILE='/etc/systemd/system/usb-gadget.service'
-STARTUP_CMD="$DIR/venv/bin/python $AUTOMATION_SCRIPT_DIR/start_server.py"
+STARTUP_CMD="$HOME/venv/bin/python $AUTOMATION_SCRIPT_DIR/start_server.py"
 echo "Writing usbgadget service file to $UNITFILE"
 cat << EOF | sudo tee $UNITFILE > /dev/null
 [Unit]
@@ -153,7 +151,7 @@ WantedBy=sysinit.target
 EOF
 
 UNITFILE='/etc/systemd/system/trade-worker.service'
-STARTUP_CMD="$DIR/venv/bin/python $DIR/MrProgSwitchWorker/src/mrprog/worker/trade_worker.py --host $HOST --username $USERNAME --password $PASSWORD --platform switch --game $GAME"
+STARTUP_CMD="$HOME/venv/bin/python -u $HOME/MrProgSwitchWorker/src/mrprog/worker/trade_worker.py --host $HOST --username $USERNAME --password $PASSWORD --platform switch --game $GAME"
 echo "Writing trade worker service file to $UNITFILE"
 cat << EOF | sudo tee $UNITFILE > /dev/null
 [Unit]
@@ -162,9 +160,13 @@ After=systemd-networkd-wait-online.service usb-gadget.service v4l2loopback.servi
 Wants=systemd-networkd-wait-online.service usb-gadget.service v4l2loopback.service
 [Service]
 Type=simple
+User=$USER
+Group=$USER
+WorkingDirectory=~
 ExecStart=$STARTUP_CMD
 Restart=always
-StandardOutput=journal+console
+StandardOutput=journal
+StandardError=journal
 [Install]
 WantedBy=sysinit.target
 EOF

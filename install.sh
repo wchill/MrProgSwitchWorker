@@ -134,7 +134,7 @@ WantedBy=multi-user.target
 EOF
 
 UNITFILE='/etc/systemd/system/usb-gadget.service'
-STARTUP_CMD="$HOME/venv/bin/python $AUTOMATION_SCRIPT_DIR/start_server.py"
+STARTUP_CMD="$HOME/venv/bin/python -u $AUTOMATION_SCRIPT_DIR/start_server.py"
 echo "Writing usbgadget service file to $UNITFILE"
 cat << EOF | sudo tee $UNITFILE > /dev/null
 [Unit]

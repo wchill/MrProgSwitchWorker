@@ -163,65 +163,80 @@ class TradeWorker:
             self.controller.press_button(Button.A, hold_ms=100, wait_ms=2000)
             await self.controller.wait_for_inputs()
 
-        logger.info("Connecting to mqtt/amqp")
-        mqtt_host, mqtt_user, mqtt_pass = self._mqtt_connection_info
-        self.mqtt_client = asyncio_mqtt.Client(
-            hostname=mqtt_host,
-            username=mqtt_user,
-            password=mqtt_pass,
-            will=asyncio_mqtt.Will(topic=f"worker/{self.worker_id}/available", payload="0", qos=1, retain=True),
-            clean_session=False,
-            client_id=self.worker_id,
-        )
-        await self.mqtt_client.connect()
+        while True:
+            try:
+                logger.info("Connecting to mqtt/amqp")
+                mqtt_host, mqtt_user, mqtt_pass = self._mqtt_connection_info
+                self.mqtt_client = asyncio_mqtt.Client(
+                    hostname=mqtt_host,
+                    username=mqtt_user,
+                    password=mqtt_pass,
+                    will=asyncio_mqtt.Will(topic=f"worker/{self.worker_id}/available", payload="0", qos=1, retain=True),
+                    clean_session=False,
+                    client_id=self.worker_id,
+                )
+                await self.mqtt_client.connect()
 
-        self.amqp_connection = await aio_pika.connect_robust(
-            self._amqp_connection_str,
-            loop=self.loop,
-        )
-        self.trade_channel = await self.amqp_connection.channel()
-        self.control_channel = await self.amqp_connection.channel()
+                self.amqp_connection = await aio_pika.connect_robust(
+                    self._amqp_connection_str,
+                    loop=self.loop,
+                )
+                self.trade_channel = await self.amqp_connection.channel()
+                await self.trade_channel.set_qos(1)
+                self.control_channel = await self.amqp_connection.channel()
 
-        # Declare an exchange
-        self.trade_exchange = await self.trade_channel.declare_exchange(
-            name="trade_requests", type=aio_pika.ExchangeType.TOPIC, durable=True
-        )
-        self.control_exchange = await self.control_channel.declare_exchange(
-            name="control_requests", type=aio_pika.ExchangeType.TOPIC, durable=True
-        )
+                # Declare an exchange
+                self.trade_exchange = await self.trade_channel.declare_exchange(
+                    name="trade_requests", type=aio_pika.ExchangeType.TOPIC, durable=True
+                )
+                self.control_exchange = await self.control_channel.declare_exchange(
+                    name="control_requests", type=aio_pika.ExchangeType.TOPIC, durable=True
+                )
 
-        # Declaring queues
-        task_queue = await self.trade_channel.declare_queue(
-            name=f"{self.system}_bn{self.game}_task_queue", durable=True, arguments={"x-max-priority": 100}
-        )
-        await task_queue.bind(self.trade_exchange, routing_key=f"requests.{self.system}.bn{self.game}")
-        self.task_queue = task_queue
+                # Declaring queues
+                task_queue = await self.trade_channel.declare_queue(
+                    name=f"{self.system}_bn{self.game}_task_queue", durable=True, arguments={"x-max-priority": 100}
+                )
+                await task_queue.bind(self.trade_exchange, routing_key=f"requests.{self.system}.bn{self.game}")
+                self.task_queue = task_queue
 
-        control_queue = await self.control_channel.declare_queue(
-            name=f"control_queue_{self.worker_id[:8]}", exclusive=True
-        )
-        await control_queue.bind(self.control_exchange, routing_key=f"control.{self.worker_id}")
-        self.control_queue = control_queue
-        await self.control_queue.consume(self.on_control_request, no_ack=True)
+                control_queue = await self.control_channel.declare_queue(name=f"control_queue_{self.worker_id[:8]}")
+                await control_queue.bind(self.control_exchange, routing_key=f"control.{self.worker_id}")
+                self.control_queue = control_queue
+                await self.control_queue.consume(self.on_control_request, no_ack=True)
 
-        self.notification_queue = await self.trade_channel.declare_queue(name="trade_status_update", durable=True)
+                self.notification_queue = await self.trade_channel.declare_queue(
+                    name="trade_status_update", durable=True
+                )
 
-        logger.info("Going into mqtt update loop")
-        await self.update_mqtt_info()
+                logger.info("Going into mqtt update loop")
+                await self.update_mqtt_info()
+            except Exception as e:
+                logger.exception(f"Exception in mqtt/amqp handlers", exc_info=e)
 
     async def on_trade_request(self, message: AbstractIncomingMessage) -> None:
         async with self.trade_lock:
             try:
                 async with message.process(requeue=True, ignore_processed=True):
-                    assert message.reply_to is not None
+                    if message.reply_to is None:
+                        logger.error(f"Received message {message.correlation_id} without reply to! Ignoring")
+                        await message.ack()
+                        return
 
-                    request = TradeRequest.from_bytes(message.body)
+                    try:
+                        request = TradeRequest.from_bytes(message.body)
+                    except Exception:
+                        logger.error(
+                            f"Received message {message.correlation_id} that couldn't be deserialized! Ignoring: {message.body}"
+                        )
+                        await message.ack()
+                        return
                     logger.info(f"Received request: {request.trade_id} - {request.trade_item}")
                     if self.last_seen_id > request.trade_id and not message.redelivered:
                         logger.info(f"Skipping message: {self.last_seen_id} > {request.trade_id}")
                         await message.ack()
                         return
-                    elif self.last_seen_id < request.trade_id and not message.redelivered:
+                    elif self.last_seen_id < request.trade_id and not message.redelivered and message.priority == 0:
                         self.last_seen_id = request.trade_id
 
                     response = TradeResponse(
@@ -262,24 +277,8 @@ class TradeWorker:
                             routing_key=message.reply_to,
                         )
                     except asyncio.CancelledError:
-                        trade_result, trader_message = await trade_completed
-                        response = TradeResponse(request, self.worker_id, trade_result, message=trader_message)
-                        await self.trade_exchange.publish(
-                            Message(
-                                body=response.to_bytes(),
-                                content_type="application/json",
-                                correlation_id=message.correlation_id,
-                            ),
-                            routing_key=message.reply_to,
-                        )
-                        if trade_result in [TradeResponse.SUCCESS, TradeResponse.CANCELLED, TradeResponse.USER_TIMEOUT]:
-                            await message.ack()
-                        else:
-                            await message.nack(requeue=True)
-                            await self.mqtt_client.publish(
-                                topic=f"worker/{self.worker_id}/enabled", payload=0, qos=1, retain=True
-                            )
-                        return
+                        logger.warning("Room code future was cancelled")
+
                     trade_result, trader_message = await trade_completed
 
                     response = TradeResponse(request, self.worker_id, trade_result, message=trader_message)
@@ -293,9 +292,14 @@ class TradeWorker:
                         routing_key=message.reply_to,
                     )
                     if trade_result in [TradeResponse.SUCCESS, TradeResponse.CANCELLED, TradeResponse.USER_TIMEOUT]:
+                        logger.warning(f"Trade finished: {trade_result, trader_message}")
                         await message.ack()
                     else:
+                        logger.warning(f"Trade error: {trade_result, trader_message}")
                         await message.nack(requeue=True)
+
+                    if trade_result == TradeResponse.CRITICAL_FAILURE:
+                        logger.warning(f"Disabling worker: {trade_result, trader_message}")
                         await self.mqtt_client.publish(
                             topic=f"worker/{self.worker_id}/enabled", payload=0, qos=1, retain=True
                         )

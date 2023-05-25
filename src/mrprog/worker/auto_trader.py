@@ -6,7 +6,7 @@ import math
 import multiprocessing
 import time
 from queue import Queue
-from typing import Any, Callable, Dict, Generic, List, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 
 from mmbn.gamedata.bn3 import bn3_chip_list, bn3_ncp_list
 from mmbn.gamedata.bn6 import bn6_chip_list, bn6_ncp_list
@@ -22,6 +22,8 @@ logger = logging.getLogger(__file__)
 
 
 MODULES: Dict[int, Any] = {3: (bn3_chip_list, bn3_ncp_list), 6: (bn6_chip_list, bn6_ncp_list)}
+
+STARTING_NCP = {3: "SprArmor", 6: "SuprArmr"}
 
 
 class Node(Generic[T]):
@@ -94,10 +96,9 @@ class AutoTrader(Script):
         super().__init__(controller)
         self.game = game
 
-        # TODO: Test BN3
         chip_list, ncp_list = MODULES[game]
         ncp_nothing = ncp_list.NOTHING
-        all_parts = ncp_list.ALL_PARTS
+        all_parts = ncp_list.TRADABLE_PARTS
         tradable_chip_order = chip_list.TRADABLE_CHIP_ORDER
 
         self.root_chip_node = self.build_all_chip_input_graphs(tradable_chip_order)
@@ -132,7 +133,8 @@ class AutoTrader(Script):
         return self.root_chip_node.search(chip)
 
     def calculate_ncp_inputs(self, ncp: NaviCustPart) -> List[Tuple[Union[Button, DPad], Node[NaviCustPart]]]:
-        return self.root_ncp_node.search(ncp)
+        result = self.root_ncp_node.search(ncp)
+        return result
 
     async def connect_controller(self) -> None:
         if (
@@ -234,10 +236,10 @@ class AutoTrader(Script):
         # Next
         self.a()
 
-        logger.debug("Waiting for ncp select")
+        logger.info("Waiting for ncp select")
         # TODO: Handle this in BN3
         return self.wait_for_text(
-            lambda ocr_text: ocr_text == "SuprArmr", (1080, 270), (200, 60), timeout=10, invert=False
+            lambda ocr_text: ocr_text == STARTING_NCP[self.game], (1080, 270), (200, 60), timeout=10, invert=False
         )
 
     """
@@ -300,7 +302,7 @@ class AutoTrader(Script):
         navigate_func: Callable[[], bool],
         input_tuples: List[Tuple[Union[Button, DPad], Node[T]]],
         room_code_future: asyncio.Future,
-    ) -> Tuple[int, Union[bytes, str]]:
+    ) -> Tuple[int, Optional[str]]:
         try:
             logger.info(f"Trading {trade_request.trade_item}")
 
@@ -308,6 +310,7 @@ class AutoTrader(Script):
 
             success = navigate_func()
             if not success:
+                room_code_future.cancel()
                 return TradeResponse.CRITICAL_FAILURE, "Unable to open trade screen."
 
             for controller_input, selected_chip in input_tuples:
@@ -389,7 +392,7 @@ class AutoTrader(Script):
                             if self.wait_for_text(lambda ocr_text: ocr_text == "NETWORK", (55, 65), (225, 50), 10):
                                 logger.debug("Back at main menu")
                                 self.wait(2000)
-                                return TradeResponse.SUCCESS, "Trade successful."
+                                return TradeResponse.SUCCESS, None
                             else:
                                 return (
                                     TradeResponse.CRITICAL_FAILURE,
@@ -415,7 +418,7 @@ class AutoTrader(Script):
 
     async def trade_chip(
         self, trade_request: TradeRequest, room_code_future: asyncio.Future
-    ) -> Tuple[int, Union[bytes, str]]:
+    ) -> Tuple[int, Optional[str]]:
         return await self.trade(
             trade_request,
             self.navigate_to_chip_trade_screen,
@@ -425,7 +428,7 @@ class AutoTrader(Script):
 
     async def trade_ncp(
         self, trade_request: TradeRequest, room_code_future: asyncio.Future
-    ) -> Tuple[int, Union[bytes, str]]:
+    ) -> Tuple[int, Optional[str]]:
         return await self.trade(
             trade_request,
             self.navigate_to_ncp_trade_screen,

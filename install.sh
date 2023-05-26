@@ -91,10 +91,9 @@ Description=EDID loader for TC358743
 After=systemd-modules-load.service
 
 [Service]
-Type=oneshot
+Type=notify
+NotifyAccess=all
 ExecStart=/usr/bin/env bash $AUTOMATION_SCRIPT_DIR/init_tc358743.sh
-ExecStop=/bin/true
-RemainAfterExit=true
 
 [Install]
 WantedBy=multi-user.target
@@ -106,6 +105,7 @@ cat << EOF | sudo tee $UNITFILE > /dev/null
 [Unit]
 Description=V4L2 loopback feeder
 After=tc358743.service
+BindsTo=tc358743.service
 
 [Service]
 Type=simple
@@ -113,7 +113,7 @@ ExecStart=/usr/bin/ffmpeg -f video4linux2 -input_format bgr24 -video_size 1280x7
 Restart=always
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=tc358743.service
 EOF
 
 UNITFILE='/etc/systemd/system/v4l2rtspserver.service'
@@ -122,6 +122,7 @@ cat << EOF | sudo tee $UNITFILE > /dev/null
 [Unit]
 Description=V4L2 RTSP server
 After=v4l2loopback.service
+PartOf=v4l2loopback.service
 
 [Service]
 Type=simple
@@ -130,7 +131,7 @@ Restart=always
 RestartSec=10
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=v4l2loopback.service
 EOF
 
 UNITFILE='/etc/systemd/system/usb-gadget.service'

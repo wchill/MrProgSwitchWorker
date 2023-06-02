@@ -107,7 +107,7 @@ class TradeWorker:
             decoded_msg = message.body.decode("utf-8")
             if decoded_msg == "reset":
                 logger.info("Attempting to acquire trade lock")
-                with self.trade_lock:
+                async with self.trade_lock:
                     logger.info("Reloading save")
                     await self.trader.reload_save()
                     logger.info("Save reloaded")

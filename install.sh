@@ -164,6 +164,7 @@ Type=simple
 User=$USER
 Group=$USER
 WorkingDirectory=~
+TimeoutStopSec=240
 ExecStart=$STARTUP_CMD
 Restart=always
 StandardOutput=journal

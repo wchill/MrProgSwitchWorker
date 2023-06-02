@@ -1,0 +1,25 @@
+name: Deployment
+
+concurrency: production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deployment:
+    strategy:
+      matrix:
+        host: [switch-worker-1, switch-worker-2]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Tailscale
+        uses: tailscale/github-action@v1
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+      - name: deploy
+        run: |
+          # TODO: Dynamically pull a list of workers
+          ssh wchill@${{ matrix.host }} "/usr/bin/env bash /home/wchill/${{ github.event.repository.name }}/update.sh"

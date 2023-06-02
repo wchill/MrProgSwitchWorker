@@ -6,7 +6,18 @@ import math
 import multiprocessing
 import time
 from queue import Queue
-from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar, Union
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 from mmbn.gamedata.bn3 import bn3_chip_list, bn3_ncp_list
 from mmbn.gamedata.bn6 import bn6_chip_list, bn6_ncp_list
@@ -146,99 +157,103 @@ class AutoTrader(Script):
             self.controller.press_button(Button.A, hold_ms=100, wait_ms=2000)
             await self.controller.wait_for_inputs()
 
-    def reload_save(self):
-        self.home(wait_time=1000)
-        self.plus(wait_time=1000)
-        self.a()
-        self.down()
-        self.a(wait_time=500)
+    async def reload_save(self):
+        # Home screen
+        await self.home(wait_time=1000)
+
+        # Cloud save menu
+        await self.plus(wait_time=1000)
+        await self.a()
+
+        # Select correct profile
+        await self.down()
+        await self.a(wait_time=500)
 
         # TODO: Wait for "Download Save Data"
-        self.wait(5000)
-        self.down()
-        self.a()
+        await self.wait(5000)
+        await self.down()
+        await self.a()
 
         # TODO: Wait for "Close the software"
-        self.wait(1000)
-        self.a(wait_time=5000)
-        self.up()
-        self.a()
+        await self.wait(1000)
+        await self.a(wait_time=5000)
+        await self.up()
+        await self.a()
 
         # TODO: Wait for "Download complete.
-        self.wait(5000)
-        self.b(wait_time=1000)
-        self.b()
-        self.b()
+        await self.wait(5000)
+        await self.b(wait_time=1000)
+        await self.b()
+        await self.b()
 
-        self.a()
+        await self.a()
 
         # TODO: Wait for "Select a user."
-        self.wait(2000)
-        self.a(wait_time=2000)
-        self.a()
+        await self.wait(2000)
+        await self.a(wait_time=2000)
+        await self.a()
 
         # TODO: Wait for "PRESS ANY BUTTON"
-        self.wait(60000)
-        self.a()
+        for _ in range(60):
+            await self.a(wait_time=1000)
 
         # TODO: Wait for "MAIN MENU"
-        self.wait(15000)
+        # await self.wait(15000)
 
-        self.a(wait_time=1000)
-        self.a(wait_time=10000)
-        self.plus(wait_time=500)
-        self.a(wait_time=3000)
+        # self.a(wait_time=1000)
+        # self.a(wait_time=10000)
+        await self.plus(wait_time=500)
+        await self.a(wait_time=5000)
 
-        self.plus()
-        self.up()
-        self.up()
-        self.a(wait_time=3000)
+        await self.plus(wait_time=1000)
+        await self.up()
+        await self.up(wait_time=500)
+        await self.a(wait_time=3000)
 
-    def navigate_to_chip_trade_screen(self) -> bool:
+    async def navigate_to_chip_trade_screen(self) -> bool:
         # navigate to trade screen
         # Trade
-        self.down()
-        self.a()
+        await self.down()
+        await self.a()
 
         # Private Trade
-        self.down()
-        self.a()
+        await self.down()
+        await self.a()
 
         # Create Room
-        self.a()
+        await self.a()
 
         # Chip Trade
-        self.a()
+        await self.a()
 
         # Next
-        self.a()
+        await self.a()
 
         logger.debug("Waiting for chip select")
-        return self.wait_for_text(lambda ocr_text: ocr_text == "Sort : ID", (1054, 205), (162, 48), 10)
+        return await self.wait_for_text(lambda ocr_text: ocr_text == "Sort : ID", (1054, 205), (162, 48), 10)
 
-    def navigate_to_ncp_trade_screen(self) -> bool:
+    async def navigate_to_ncp_trade_screen(self) -> bool:
         # navigate to trade screen
         # Trade
-        self.down()
-        self.a()
+        await self.down()
+        await self.a()
 
         # Private Trade
-        self.down()
-        self.a()
+        await self.down()
+        await self.a()
 
         # Create Room
-        self.a()
+        await self.a()
 
         # Program Trade
-        self.down()
-        self.a()
+        await self.down()
+        await self.a()
 
         # Next
-        self.a()
+        await self.a()
 
         logger.info("Waiting for ncp select")
-        # TODO: Handle this in BN3
-        return self.wait_for_text(
+        return await self.wait_for_text(
             lambda ocr_text: ocr_text == STARTING_NCP[self.game], (1080, 270), (200, 60), timeout=10, invert=False
         )
 
@@ -267,48 +282,17 @@ class AutoTrader(Script):
         cancel_lock.release()
         return False
 
-    def get_last_inputs(self) -> List[str]:
-        last_inputs = []
-        for previous_input in self.last_inputs:
-            if isinstance(previous_input, Command):
-                buttons = previous_input.current_buttons
-                dpad = previous_input.current_dpad
-                left_angle, left_intensity = previous_input.current_left_stick
-                right_angle, right_intensity = previous_input.current_right_stick
-
-                input_strs = []
-                if len(buttons) != 0:
-                    # noinspection PyTypeChecker
-                    input_strs.append(" | ".join([button.name for button in buttons]))
-                if dpad != DPad.Center:
-                    input_strs.append(dpad.name)
-                if left_intensity != 0:
-                    input_strs.append(f"LS {left_angle} {left_intensity}")
-                if right_intensity != 0:
-                    input_strs.append(f"RS {right_angle} {right_intensity}")
-                if len(input_strs) == 0:
-                    input_strs.append("nothing")
-                input_str = ", ".join(input_strs)
-                if previous_input.time > 0:
-                    input_str += f" {math.ceil(previous_input.time / 8) * 8}ms"
-                last_inputs.append(input_str)
-            else:
-                last_inputs.append(f"Wait {previous_input}ms")
-        return last_inputs
-
     async def trade(
         self,
         trade_request: TradeRequest,
-        navigate_func: Callable[[], bool],
+        navigate_func: Callable[[], Awaitable[bool]],
         input_tuples: List[Tuple[Union[Button, DPad], Node[T]]],
         room_code_future: asyncio.Future,
     ) -> Tuple[int, Optional[str]]:
         try:
             logger.info(f"Trading {trade_request.trade_item}")
 
-            self.last_inputs.clear()
-
-            success = navigate_func()
+            success = await navigate_func()
             if not success:
                 room_code_future.cancel()
                 return TradeResponse.CRITICAL_FAILURE, "Unable to open trade screen."
@@ -326,11 +310,13 @@ class AutoTrader(Script):
                 return TradeResult.Cancelled, "Trade cancelled by user."
             """
 
-            self.a()
-            self.a()
+            await self.a()
+            await self.a()
 
             logger.debug("Searching for room code")
-            if not self.wait_for_text(lambda ocr_text: ocr_text.startswith("Room Code: "), (1242, 89), (365, 54), 15):
+            if not await self.wait_for_text(
+                lambda ocr_text: ocr_text.startswith("Room Code: "), (1242, 89), (365, 54), 15
+            ):
                 room_code_future.cancel()
                 return TradeResponse.CRITICAL_FAILURE, "Unable to retrieve room code."
 
@@ -356,42 +342,44 @@ class AutoTrader(Script):
                 """
                 if error == "A communication error occurred.":
                     logger.warning("Communication error, restarting trade")
-                    self.wait(1000)
-                    self.a(wait_time=1000)
+                    await self.wait(1000)
+                    await self.a(wait_time=1000)
                     return TradeResponse.RETRYING, "There was a communication error. Retrying."
                 elif error == "The guest has already left.":
-                    self.wait(12000)
-                    self.b(wait_time=1000)
-                    self.a(wait_time=1000)
+                    await self.wait(12000)
+                    await self.b(wait_time=1000)
+                    await self.a(wait_time=1000)
                     return TradeResponse.CANCELLED, "User left the room, trade cancelled."
                 else:
                     text = image_processing.run_tesseract_line(image_processing.capture(), (785, 123), (160, 60))
                     # TODO: Handle "the trade failed", etc
                     if text == "1/15":
                         logger.debug("User joined lobby")
-                        self.wait(500)
-                        self.a(wait_time=1000)
+                        await self.wait(500)
+                        await self.a(wait_time=1000)
                         error = image_processing.run_tesseract_line(image_processing.capture(), (660, 440), (620, 50))
                         if error == "The guest has already left.":
-                            self.wait(12000)
-                            self.b(wait_time=1000)
-                            self.a(wait_time=1000)
+                            await self.wait(12000)
+                            await self.b(wait_time=1000)
+                            await self.a(wait_time=1000)
                             return TradeResponse.CANCELLED, "User left the room, trade cancelled."
-                        self.a()
+                        await self.a()
                         error = image_processing.run_tesseract_line(image_processing.capture(), (660, 440), (620, 50))
                         if error == "The guest has already left.":
-                            self.wait(12000)
-                            self.b(wait_time=1000)
-                            self.a(wait_time=1000)
+                            await self.wait(12000)
+                            await self.b(wait_time=1000)
+                            await self.a(wait_time=1000)
                             return TradeResponse.CANCELLED, "User left the room, trade cancelled."
                         logger.debug("User completed trade")
-                        if self.wait_for_text(
+                        if await self.wait_for_text(
                             lambda ocr_text: ocr_text == "Trade complete!", (815, 440), (310, 55), 20
                         ):
-                            self.a(wait_time=1000)
-                            if self.wait_for_text(lambda ocr_text: ocr_text == "NETWORK", (55, 65), (225, 50), 10):
+                            await self.a(wait_time=1000)
+                            if await self.wait_for_text(
+                                lambda ocr_text: ocr_text == "NETWORK", (55, 65), (225, 50), 10
+                            ):
                                 logger.debug("Back at main menu")
-                                self.wait(2000)
+                                await self.wait(2000)
                                 return TradeResponse.SUCCESS, None
                             else:
                                 return (
@@ -403,14 +391,14 @@ class AutoTrader(Script):
                                 image_processing.capture(), (660, 440), (620, 50)
                             )
                             if error == "The guest has already left.":
-                                self.wait(12000)
-                                self.b(wait_time=1000)
-                                self.a(wait_time=1000)
+                                await self.wait(12000)
+                                await self.b(wait_time=1000)
+                                await self.a(wait_time=1000)
                                 return TradeResponse.CANCELLED, "User left the room, trade cancelled."
                             return TradeResponse.CRITICAL_FAILURE, "Trade failed due to an unexpected state."
 
-            self.b(wait_time=1000)
-            self.a(wait_time=1000)
+            await self.b(wait_time=1000)
+            await self.a(wait_time=1000)
             return TradeResponse.USER_TIMEOUT, "Trade cancelled due to timeout."
         except Exception as e:
             room_code_future.cancel()

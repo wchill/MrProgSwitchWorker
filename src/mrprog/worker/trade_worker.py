@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import logging
 import platform
+import signal
 from typing import Tuple
 
 import aio_pika
@@ -70,11 +71,12 @@ class TradeWorker:
         self.last_seen_id = 0
 
         self.trade_lock = asyncio.Lock()
+        self.should_consume_queue = False
 
     async def handle_mqtt_updates(self) -> None:
         game_enabled = False
         worker_enabled = False
-        task_queue_consumed = False
+        self.should_consume_queue = False
 
         async with self.mqtt_client.messages() as messages:
             await self.mqtt_client.subscribe(f"game/{self.system}/{self.game}/enabled")
@@ -86,9 +88,9 @@ class TradeWorker:
                 elif message.topic.matches(f"worker/{self.worker_id}/enabled"):
                     worker_enabled = message.payload == b"1"
 
-                if task_queue_consumed != (game_enabled and worker_enabled):
-                    task_queue_consumed = game_enabled and worker_enabled
-                    if not task_queue_consumed:
+                if self.should_consume_queue != (game_enabled and worker_enabled):
+                    self.should_consume_queue = game_enabled and worker_enabled
+                    if not self.should_consume_queue:
                         logger.info("Disabling task queue")
                         await self.task_queue.cancel(consumer_tag=f"{self.worker_id}_taskqueue")
                     else:
@@ -100,9 +102,14 @@ class TradeWorker:
     async def on_control_request(self, message: AbstractIncomingMessage) -> None:
         logger.info(f"Received control request: {message.body}")
         try:
-            inputs = message.body.decode("utf-8").split(",")
+            decoded_msg = message.body.decode("utf-8")
+            if decoded_msg == "reset":
+                await self.trader.reload_save()
+                return
+            inputs = decoded_msg.split(",")
             for input_str in inputs:
                 input_info = input_str.split(" ")
+
                 if len(input_info) == 3:
                     wait_ms = int(input_info[2])
                     hold_ms = int(input_info[1])
@@ -218,6 +225,13 @@ class TradeWorker:
         async with self.trade_lock:
             try:
                 async with message.process(requeue=True, ignore_processed=True):
+                    if not self.should_consume_queue:
+                        logger.error(
+                            f"Received message {message.correlation_id} even though task queue shouldn't be consumed!"
+                        )
+                        await message.nack(requeue=True)
+                        return
+
                     if message.reply_to is None:
                         logger.error(f"Received message {message.correlation_id} without reply to! Ignoring")
                         await message.ack()
@@ -312,6 +326,13 @@ class TradeWorker:
                 await message.nack(requeue=True)
 
 
+def signal_handler(sig, frame, worker: TradeWorker):
+    logger.warning(f"Received {sig} {frame}, waiting for trade lock...")
+    asyncio.run(worker.trade_lock.acquire())
+    logger.warning("Exiting due to signal")
+    exit(0)
+
+
 async def main():
     parser = argparse.ArgumentParser(prog="Mr. Prog Trade Worker", description="Trade worker process for Mr. Prog")
     parser.add_argument("--host")  # positional argument
@@ -323,6 +344,9 @@ async def main():
 
     install_logger(args.host, args.username, args.password)
     worker = TradeWorker(("127.0.0.1", 3000), args.host, args.username, args.password, args.platform, args.game)
+
+    signal.signal(signal.SIGINT, lambda sig, frame: signal_handler(sig, frame, worker))
+    signal.signal(signal.SIGTERM, lambda sig, frame: signal_handler(sig, frame, worker))
     await worker.run()
 
 

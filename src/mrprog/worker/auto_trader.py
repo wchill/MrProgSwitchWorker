@@ -177,16 +177,14 @@ class AutoTrader(Script):
         # TODO: Wait for "Close the software"
         await self.wait(1000)
         await self.a(wait_time=5000)
+
+        # Select "download save"
         await self.up()
         await self.a()
 
         # TODO: Wait for "Download complete.
-        await self.wait(5000)
-        await self.b(wait_time=1000)
-        await self.b()
-        await self.b()
-
-        await self.a()
+        await self.wait(20000)
+        await self.home()
 
         # TODO: Wait for "Select a user."
         await self.wait(2000)
@@ -197,11 +195,7 @@ class AutoTrader(Script):
         for _ in range(60):
             await self.a(wait_time=1000)
 
-        # TODO: Wait for "MAIN MENU"
-        # await self.wait(15000)
-
-        # self.a(wait_time=1000)
-        # self.a(wait_time=10000)
+        # TODO: Wait for "PRESS + BUTTON"
         await self.plus(wait_time=500)
         await self.a(wait_time=5000)
 

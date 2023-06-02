@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - master
 
 jobs:
   deployment:
@@ -20,7 +20,10 @@ jobs:
         uses: tailscale/github-action@v1
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
-      - name: deploy
-        run: |
-          # TODO: Dynamically pull a list of workers
-          ssh wchill@${{ matrix.host }} "/usr/bin/env bash /home/wchill/${{ github.event.repository.name }}/update.sh"
+      - name: Login via ssh + run update script
+        uses: garygrossgarten/github-action-ssh@release
+        with:
+          command: /usr/bin/env bash /home/wchill/${{ github.event.repository.name }}/update.sh
+          host: ${{ matrix.host }}
+          username: wchill
+          privateKey: ${{ secrets.PRIVATE_KEY }}

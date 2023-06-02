@@ -338,7 +338,9 @@ class TradeWorker:
 
 def signal_handler(sig, frame, worker: TradeWorker):
     logger.warning(f"Received {sig} {frame}, waiting for trade lock...")
-    asyncio.run(worker.trade_lock.acquire())
+    loop = asyncio.get_running_loop()
+    fut = asyncio.run_coroutine_threadsafe(worker.trade_lock.acquire(), loop)
+    fut.result()
     logger.warning("Exiting due to signal")
     exit(0)
 

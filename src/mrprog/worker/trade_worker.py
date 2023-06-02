@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import json
 import logging
 import platform
 import signal
@@ -21,6 +22,7 @@ from aio_pika.abc import (
 )
 from auto_trader import AutoTrader
 from mmbn.gamedata.chip import Chip
+from mrprog.utils import shell
 from mrprog.utils.logging import install_logger
 from mrprog.utils.trade import TradeRequest, TradeResponse
 from nx.automation import image_processing
@@ -150,6 +152,10 @@ class TradeWorker:
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/system", payload=self.system, qos=1, retain=True)
         await self.mqtt_client.publish(
             topic=f"worker/{self.worker_id}/game", payload=str(self.game), qos=1, retain=True
+        )
+        git_versions = await shell.get_git_versions()
+        await self.mqtt_client.publish(
+            topic=f"worker/{self.worker_id}/version", payload=json.dumps(git_versions), qos=1, retain=True
         )
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/available", payload="1", qos=1, retain=True)
 

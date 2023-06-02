@@ -5,6 +5,7 @@ updaterepo() {
   cd "$HOME/$repo" || exit
   git reset --hard HEAD
   git clean -fd
+  git pull
   "$HOME/venv/bin/python" -m pip install -e "$HOME/$repo"
 }
 

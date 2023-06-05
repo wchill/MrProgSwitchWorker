@@ -389,6 +389,13 @@ class AutoTrader(Script):
                                 await self.b(wait_time=1000)
                                 await self.a(wait_time=1000)
                                 return TradeResponse.CANCELLED, "User left the room, trade cancelled."
+                            error = image_processing.run_tesseract_line(
+                                image_processing.capture(), (800, 400), (335, 65)
+                            )
+                            if error == "The trade failed.":
+                                await self.wait(1000)
+                                await self.a(wait_time=1000)
+                                return TradeResponse.RETRYING, "The trade failed. Retrying."
                             return TradeResponse.CRITICAL_FAILURE, "Trade failed due to an unexpected state."
 
             await self.b(wait_time=1000)

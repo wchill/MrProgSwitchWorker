@@ -2,7 +2,7 @@
 requires = ["setuptools", "wheel"]
 
 [project]
-name = "mr-prog-worker"
+name = "mr-prog-switch-worker"
 authors = [
     {name = "wchill"}
 ]

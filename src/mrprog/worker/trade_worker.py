@@ -50,16 +50,19 @@ class TradeWorker:
     control_channel: AbstractChannel
     control_queue: AbstractQueue
 
-    def __init__(self, trader: AbstractAutoTrader, host: str, username: str, password: str, system: str, game: int):
+    def __init__(
+        self, hostname: str, trader: AbstractAutoTrader, host: str, username: str, password: str, system: str, game: int
+    ):
         self.trader = trader
         self.system = system
         self.game = game
+        self.hostname = hostname
 
         self._amqp_connection_str = f"amqp://{username}:{password}@{host}/"
         self._mqtt_connection_info = (host, username, password)
         self._mqtt_update_task = None
 
-        self.worker_id = hashlib.sha256(platform.node().encode("utf-8")).hexdigest()
+        self.worker_id = hashlib.sha256(self.hostname.encode("utf-8")).hexdigest()
         self.loop = asyncio.get_running_loop()
 
         self.cached_messages = {}
@@ -139,7 +142,7 @@ class TradeWorker:
                     break
 
         await self.mqtt_client.publish(
-            topic=f"worker/{self.worker_id}/hostname", payload=platform.node(), qos=1, retain=True
+            topic=f"worker/{self.worker_id}/hostname", payload=self.hostname, qos=1, retain=True
         )
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/address", payload=ip_address, qos=1, retain=True)
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/system", payload=self.system, qos=1, retain=True)
@@ -360,17 +363,20 @@ async def main():
     trader_init_functions = {"switch": init_switch_worker, "steam": init_steam_worker}
 
     parser = argparse.ArgumentParser(prog="Mr. Prog Trade Worker", description="Trade worker process for Mr. Prog")
-    parser.add_argument("--host")  # positional argument
-    parser.add_argument("--username")  # option that takes a value
-    parser.add_argument("--password")
-    parser.add_argument("--platform")
-    parser.add_argument("--game", type=int)
+    parser.add_argument("--host", required=True)  # positional argument
+    parser.add_argument("--username", required=True)  # option that takes a value
+    parser.add_argument("--password", required=True)
+    parser.add_argument("--platform", required=True)
+    parser.add_argument("--game", type=int, required=True)
+    parser.add_argument("--hostname", required=False)
     args = parser.parse_args()
 
     install_logger(args.host, args.username, args.password)
 
-    trader = await trader_init_functions[args.platform]()
-    worker = TradeWorker(trader, args.host, args.username, args.password, args.platform, args.game)
+    trader = await trader_init_functions[args.platform](args.game)
+    worker = TradeWorker(
+        trader, args.hostname or platform.node(), args.host, args.username, args.password, args.platform, args.game
+    )
 
     signal.signal(signal.SIGINT, lambda sig, frame: signal_handler(sig, frame, worker))
     signal.signal(signal.SIGTERM, lambda sig, frame: signal_handler(sig, frame, worker))

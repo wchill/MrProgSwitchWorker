@@ -350,7 +350,7 @@ async def init_switch_worker(game: int) -> AbstractAutoTrader:
 async def init_steam_worker(game: int) -> AbstractAutoTrader:
     from nx.controller.sinks import WindowsNamedPipeSink
 
-    from mrprog.worker.switch_auto_trader import SteamAutoTrader
+    from mrprog.worker.steam_auto_trader import SteamAutoTrader
 
     sink = WindowsNamedPipeSink()
     pipe = sink.connect_to_pipe()

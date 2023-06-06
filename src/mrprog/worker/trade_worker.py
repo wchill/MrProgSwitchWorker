@@ -369,7 +369,7 @@ async def main():
 
     install_logger(args.host, args.username, args.password)
 
-    trader = await trader_init_functions[args.platform]
+    trader = await trader_init_functions[args.platform]()
     worker = TradeWorker(trader, args.host, args.username, args.password, args.platform, args.game)
 
     signal.signal(signal.SIGINT, lambda sig, frame: signal_handler(sig, frame, worker))

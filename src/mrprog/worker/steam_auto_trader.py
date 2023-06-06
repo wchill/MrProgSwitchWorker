@@ -1,4 +1,4 @@
-from .auto_trade_base import AbstractAutoTrader
+from mrprog.worker.auto_trade_base import AbstractAutoTrader
 
 
 class SteamAutoTrader(AbstractAutoTrader):

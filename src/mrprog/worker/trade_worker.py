@@ -51,7 +51,7 @@ class TradeWorker:
     control_queue: AbstractQueue
 
     def __init__(
-        self, hostname: str, trader: AbstractAutoTrader, host: str, username: str, password: str, system: str, game: int
+        self, trader: AbstractAutoTrader, hostname: str, host: str, username: str, password: str, system: str, game: int
     ):
         self.trader = trader
         self.system = system
@@ -326,7 +326,7 @@ def signal_handler(sig, frame, worker: TradeWorker):
 async def init_switch_worker(game: int) -> AbstractAutoTrader:
     from nx.controller.sinks import SocketSink
 
-    from .switch_auto_trader import SwitchAutoTrader
+    from mrprog.worker.switch_auto_trader import SwitchAutoTrader
 
     sink = SocketSink("127.0.0.1", 3000)
     socket = await sink.connect()
@@ -350,7 +350,7 @@ async def init_switch_worker(game: int) -> AbstractAutoTrader:
 async def init_steam_worker(game: int) -> AbstractAutoTrader:
     from nx.controller.sinks import WindowsNamedPipeSink
 
-    from .steam_auto_trader import SteamAutoTrader
+    from mrprog.worker.switch_auto_trader import SteamAutoTrader
 
     sink = WindowsNamedPipeSink()
     pipe = sink.connect_to_pipe()

@@ -152,7 +152,7 @@ WantedBy=sysinit.target
 EOF
 
 UNITFILE='/etc/systemd/system/trade-worker.service'
-STARTUP_CMD="$HOME/venv/bin/python -u $HOME/MrProgSwitchWorker/src/mrprog/worker/trade_worker.py --host $HOST --username $USERNAME --password $PASSWORD --platform switch --game $GAME"
+STARTUP_CMD="$HOME/venv/bin/python -u $HOME/MrProgWorker/src/mrprog/worker/trade_worker.py --host $HOST --username $USERNAME --password $PASSWORD --platform switch --game $GAME"
 echo "Writing trade worker service file to $UNITFILE"
 cat << EOF | sudo tee $UNITFILE > /dev/null
 [Unit]

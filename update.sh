@@ -16,7 +16,7 @@ sudo systemctl stop usb-gadget
 updaterepo "BattleNetworkData"
 updaterepo "BattleNetworkAutomation"
 updaterepo "MrProgUtils"
-updaterepo "MrProgSwitchWorker"
+updaterepo "MrProgWorker"
 
 sudo systemctl start usb-gadget
 sudo systemctl start trade-worker

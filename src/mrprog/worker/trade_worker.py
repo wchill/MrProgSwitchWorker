@@ -5,9 +5,10 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import platform
 import signal
-from typing import Tuple
+import sys
 
 import aio_pika
 import asyncio_mqtt
@@ -20,14 +21,14 @@ from aio_pika.abc import (
     AbstractQueue,
     AbstractRobustConnection,
 )
-from auto_trader import AutoTrader
 from mmbn.gamedata.chip import Chip
 from mrprog.utils import shell
 from mrprog.utils.logging import install_logger
 from mrprog.utils.trade import TradeRequest, TradeResponse
 from nx.automation import image_processing
 from nx.controller import Button, Controller, DPad
-from nx.controller.sinks import SocketSink
+
+from mrprog.worker.auto_trade_base import AbstractAutoTrader
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +50,10 @@ class TradeWorker:
     control_channel: AbstractChannel
     control_queue: AbstractQueue
 
-    trader: AutoTrader
-    controller: Controller
-
-    def __init__(
-        self, controller_server: Tuple[str, int], host: str, username: str, password: str, system: str, game: int
-    ):
-        # TODO: Handle BN3, Steam
-        self.controller_server = controller_server
+    def __init__(self, trader: AbstractAutoTrader, host: str, username: str, password: str, system: str, game: int):
+        self.trader = trader
         self.system = system
         self.game = game
-        self.sink = None
-        self.socket = None
 
         self._amqp_connection_str = f"amqp://{username}:{password}@{host}/"
         self._mqtt_connection_info = (host, username, password)
@@ -128,11 +121,11 @@ class TradeWorker:
 
                 try:
                     button = Button.from_str(input_info[0])
-                    self.controller.press_button(button, hold_ms, wait_ms)
+                    self.trader.controller.press_button(button, hold_ms, wait_ms)
                 except KeyError:
                     dpad = DPad.from_str(input_info[0])
-                    self.controller.press_dpad(dpad, hold_ms, wait_ms)
-            await self.controller.wait_for_inputs()
+                    self.trader.controller.press_dpad(dpad, hold_ms, wait_ms)
+            await self.trader.controller.wait_for_inputs()
         except Exception:
             logger.exception("Processing error for message %r", message)
 
@@ -162,24 +155,6 @@ class TradeWorker:
         await self.handle_mqtt_updates()
 
     async def run(self) -> None:
-        self.sink = SocketSink(self.controller_server[0], self.controller_server[1])
-        self.socket = await self.sink.connect()
-        self.controller = Controller(self.socket)
-
-        self.trader = AutoTrader(self.controller, self.game)
-
-        # Let the screen pop up if needed
-        self.controller.press_button(Button.Nothing, wait_ms=2000)
-        await self.controller.wait_for_inputs()
-        if (
-            image_processing.run_tesseract_line(image_processing.capture(), (1000, 1000), (460, 460))
-            == "Controller Not Connecting"
-        ):
-            logger.info("Found controller connect screen, connecting")
-            self.controller.press_button(Button.L + Button.R, hold_ms=100, wait_ms=2000)
-            self.controller.press_button(Button.A, hold_ms=100, wait_ms=2000)
-            await self.controller.wait_for_inputs()
-
         while True:
             try:
                 logger.info("Connecting to mqtt/amqp")
@@ -345,7 +320,45 @@ def signal_handler(sig, frame, worker: TradeWorker):
     exit(0)
 
 
+async def init_switch_worker(game: int) -> AbstractAutoTrader:
+    from nx.controller.sinks import SocketSink
+
+    from .switch_auto_trader import SwitchAutoTrader
+
+    sink = SocketSink("127.0.0.1", 3000)
+    socket = await sink.connect()
+    controller = Controller(socket)
+
+    # Let the screen pop up if needed
+    controller.press_button(Button.Nothing, wait_ms=2000)
+    await controller.wait_for_inputs()
+    if (
+        image_processing.run_tesseract_line(image_processing.capture(), (1000, 1000), (460, 460))
+        == "Controller Not Connecting"
+    ):
+        logger.info("Found controller connect screen, connecting")
+        controller.press_button(Button.L + Button.R, hold_ms=100, wait_ms=2000)
+        controller.press_button(Button.A, hold_ms=100, wait_ms=2000)
+        await controller.wait_for_inputs()
+
+    return SwitchAutoTrader(controller, game)
+
+
+async def init_steam_worker(game: int) -> AbstractAutoTrader:
+    from nx.controller.sinks import WindowsNamedPipeSink
+
+    from .steam_auto_trader import SteamAutoTrader
+
+    sink = WindowsNamedPipeSink()
+    pipe = sink.connect_to_pipe()
+    controller = Controller(pipe)
+
+    return SteamAutoTrader(controller, game)
+
+
 async def main():
+    trader_init_functions = {"switch": init_switch_worker, "steam": init_steam_worker}
+
     parser = argparse.ArgumentParser(prog="Mr. Prog Trade Worker", description="Trade worker process for Mr. Prog")
     parser.add_argument("--host")  # positional argument
     parser.add_argument("--username")  # option that takes a value
@@ -355,7 +368,9 @@ async def main():
     args = parser.parse_args()
 
     install_logger(args.host, args.username, args.password)
-    worker = TradeWorker(("127.0.0.1", 3000), args.host, args.username, args.password, args.platform, args.game)
+
+    trader = await trader_init_functions[args.platform]
+    worker = TradeWorker(trader, args.host, args.username, args.password, args.platform, args.game)
 
     signal.signal(signal.SIGINT, lambda sig, frame: signal_handler(sig, frame, worker))
     signal.signal(signal.SIGTERM, lambda sig, frame: signal_handler(sig, frame, worker))
@@ -363,4 +378,10 @@ async def main():
 
 
 if __name__ == "__main__":
+    if sys.platform.lower() == "win32" or os.name.lower() == "nt":
+        # only import if platform/os is win32/nt, otherwise "WindowsSelectorEventLoopPolicy" is not present
+        from asyncio import WindowsSelectorEventLoopPolicy, set_event_loop_policy
+
+        # set the event loop
+        set_event_loop_policy(WindowsSelectorEventLoopPolicy())
     asyncio.run(main())

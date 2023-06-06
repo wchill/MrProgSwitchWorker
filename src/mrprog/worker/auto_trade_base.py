@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import multiprocessing
 import time
+from abc import ABC, abstractmethod
 from queue import Queue
 from typing import (
     Any,
@@ -25,8 +25,8 @@ from mmbn.gamedata.chip import Chip, Sort
 from mmbn.gamedata.navicust_part import NaviCustPart
 from mrprog.utils.trade import TradeRequest, TradeResponse
 from nx.automation import image_processing
-from nx.automation.script import Script
-from nx.controller import Button, Command, Controller, DPad
+from nx.automation.script import MatchArgs, Script
+from nx.controller import Button, Controller, DPad
 
 T = TypeVar("T")
 logger = logging.getLogger(__file__)
@@ -102,7 +102,7 @@ def build_input_graph(obj_list: List[T]) -> List[Node[T]]:
     return nodes
 
 
-class AutoTrader(Script):
+class AbstractAutoTrader(Script, ABC):
     def __init__(self, controller: Controller, game: int):
         super().__init__(controller)
         self.game = game
@@ -147,62 +147,10 @@ class AutoTrader(Script):
         result = self.root_ncp_node.search(ncp)
         return result
 
-    async def connect_controller(self) -> None:
-        if (
-            image_processing.run_tesseract_line(image_processing.capture(), (1000, 1000), (460, 460))
-            == "Controller Not Connecting"
-        ):
-            logger.debug("Found controller connect screen, connecting")
-            self.controller.press_button(Button.L + Button.R, hold_ms=100, wait_ms=2000)
-            self.controller.press_button(Button.A, hold_ms=100, wait_ms=2000)
-            await self.controller.wait_for_inputs()
-
+    @abstractmethod
     async def reload_save(self):
-        # Home screen
-        await self.home(wait_time=1000)
-
-        # Cloud save menu
-        await self.plus(wait_time=1000)
-        await self.a()
-
-        # Select correct profile
-        await self.down()
-        await self.a(wait_time=500)
-
-        # TODO: Wait for "Download Save Data"
-        await self.wait(5000)
-        await self.down()
-        await self.a()
-
-        # TODO: Wait for "Close the software"
-        await self.wait(1000)
-        await self.a(wait_time=5000)
-
-        # Select "download save"
-        await self.up()
-        await self.a()
-
-        # TODO: Wait for "Download complete.
-        await self.wait(20000)
-        await self.home()
-
-        # TODO: Wait for "Select a user."
-        await self.wait(2000)
-        await self.a(wait_time=2000)
-        await self.a()
-
-        # TODO: Wait for "PRESS ANY BUTTON"
-        for _ in range(60):
-            await self.a(wait_time=1000)
-
-        # TODO: Wait for "PRESS + BUTTON"
-        await self.plus(wait_time=500)
-        await self.a(wait_time=5000)
-
-        await self.plus(wait_time=1000)
-        await self.up()
-        await self.up(wait_time=500)
-        await self.a(wait_time=3000)
+        # TODO: Implement
+        pass
 
     async def navigate_to_chip_trade_screen(self) -> bool:
         # navigate to trade screen
@@ -276,6 +224,47 @@ class AutoTrader(Script):
         cancel_lock.release()
         return False
 
+    def handle_trade_failed(self) -> MatchArgs:
+        async def handler() -> Tuple[int, Optional[str]]:
+            await self.wait(1000)
+            await self.a(wait_time=1000)
+            return TradeResponse.RETRYING, "The trade failed. Retrying."
+
+        return lambda text: text == "The guest has already left.", handler, (660, 440), (620, 50), True
+
+    def handle_communication_error(self) -> MatchArgs:
+        async def handler() -> Tuple[int, Optional[str]]:
+            logger.warning("Communication error, restarting trade")
+            await self.wait(1000)
+            await self.a(wait_time=1000)
+            return TradeResponse.RETRYING, "There was a communication error. Retrying."
+
+        return lambda text: text == "A communication error occurred.", handler, (660, 440), (620, 50), True
+
+    def handle_guest_already_left(self) -> MatchArgs:
+        async def handler() -> Tuple[int, Optional[str]]:
+            await self.wait(12000)
+            await self.b(wait_time=1000)
+            await self.a(wait_time=1000)
+            return TradeResponse.CANCELLED, "User left the room, trade cancelled."
+
+        return lambda text: text == "The trade failed.", handler, (800, 400), (335, 65), True
+
+    def handle_trade_complete(self) -> MatchArgs:
+        async def handler() -> Tuple[int, Optional[str]]:
+            await self.a(wait_time=1000)
+            if await self.wait_for_text(lambda ocr_text: ocr_text == "NETWORK", (55, 65), (225, 50), 10):
+                logger.debug("Back at main menu")
+                await self.wait(2000)
+                return TradeResponse.SUCCESS, None
+            else:
+                return (
+                    TradeResponse.CRITICAL_FAILURE,
+                    "I think the trade was successful, but something broke.",
+                )
+
+        return lambda text: text == "Trade complete!", handler, (815, 440), (310, 55), True
+
     async def trade(
         self,
         trade_request: TradeRequest,
@@ -309,7 +298,7 @@ class AutoTrader(Script):
 
             logger.debug("Searching for room code")
             if not await self.wait_for_text(
-                lambda ocr_text: ocr_text.startswith("Room Code: "), (1242, 89), (365, 54), 15
+                lambda ocr_text: ocr_text.startswith("Room Code:"), (1242, 89), (365, 54), 15
             ):
                 room_code_future.cancel()
                 return TradeResponse.CRITICAL_FAILURE, "Unable to retrieve room code."
@@ -326,7 +315,6 @@ class AutoTrader(Script):
             logger.debug("Waiting 180s for user")
             while time.time() < start_time + 180:
                 await asyncio.sleep(1)
-                error = image_processing.run_tesseract_line(image_processing.capture(), (660, 440), (620, 50))
                 """
                 if self.check_for_cancel(trade_cancelled, discord_context.user_id):
                     self.b(wait_time=1000)
@@ -334,69 +322,38 @@ class AutoTrader(Script):
                     logger.info("Cancelling trade because user didn't respond within 180 seconds")
                     return TradeResult.Cancelled, "Trade cancelled by user."
                 """
-                if error == "A communication error occurred.":
-                    logger.warning("Communication error, restarting trade")
-                    await self.wait(1000)
+
+                result = await self.match(self.handle_guest_already_left(), self.handle_communication_error())
+                if result is not None:
+                    return result
+
+                text = image_processing.run_tesseract_line(image_processing.capture(), (785, 123), (160, 60))
+                if text == "1/15":
+                    logger.debug("User joined lobby")
+                    await self.wait(500)
                     await self.a(wait_time=1000)
-                    return TradeResponse.RETRYING, "There was a communication error. Retrying."
-                elif error == "The guest has already left.":
-                    await self.wait(12000)
-                    await self.b(wait_time=1000)
-                    await self.a(wait_time=1000)
-                    return TradeResponse.CANCELLED, "User left the room, trade cancelled."
-                else:
-                    text = image_processing.run_tesseract_line(image_processing.capture(), (785, 123), (160, 60))
-                    # TODO: Handle "the trade failed", etc
-                    if text == "1/15":
-                        logger.debug("User joined lobby")
-                        await self.wait(500)
-                        await self.a(wait_time=1000)
-                        error = image_processing.run_tesseract_line(image_processing.capture(), (660, 440), (620, 50))
-                        if error == "The guest has already left.":
-                            await self.wait(12000)
-                            await self.b(wait_time=1000)
-                            await self.a(wait_time=1000)
-                            return TradeResponse.CANCELLED, "User left the room, trade cancelled."
-                        await self.a()
-                        error = image_processing.run_tesseract_line(image_processing.capture(), (660, 440), (620, 50))
-                        if error == "The guest has already left.":
-                            await self.wait(12000)
-                            await self.b(wait_time=1000)
-                            await self.a(wait_time=1000)
-                            return TradeResponse.CANCELLED, "User left the room, trade cancelled."
-                        logger.debug("User completed trade")
-                        if await self.wait_for_text(
-                            lambda ocr_text: ocr_text == "Trade complete!", (815, 440), (310, 55), 20
-                        ):
-                            await self.a(wait_time=1000)
-                            if await self.wait_for_text(
-                                lambda ocr_text: ocr_text == "NETWORK", (55, 65), (225, 50), 10
-                            ):
-                                logger.debug("Back at main menu")
-                                await self.wait(2000)
-                                return TradeResponse.SUCCESS, None
-                            else:
-                                return (
-                                    TradeResponse.CRITICAL_FAILURE,
-                                    "I think the trade was successful, but something broke.",
-                                )
-                        else:
-                            error = image_processing.run_tesseract_line(
-                                image_processing.capture(), (660, 440), (620, 50)
-                            )
-                            if error == "The guest has already left.":
-                                await self.wait(12000)
-                                await self.b(wait_time=1000)
-                                await self.a(wait_time=1000)
-                                return TradeResponse.CANCELLED, "User left the room, trade cancelled."
-                            error = image_processing.run_tesseract_line(
-                                image_processing.capture(), (800, 400), (335, 65)
-                            )
-                            if error == "The trade failed.":
-                                await self.wait(1000)
-                                await self.a(wait_time=1000)
-                                return TradeResponse.RETRYING, "The trade failed. Retrying."
-                            return TradeResponse.CRITICAL_FAILURE, "Trade failed due to an unexpected state."
+
+                    result = await self.match(self.handle_guest_already_left())
+                    if result is not None:
+                        return result
+
+                    await self.a()
+
+                    result = await self.match(self.handle_guest_already_left())
+                    if result is not None:
+                        return result
+
+                    logger.debug("User completed trade")
+
+                    try:
+                        return await self.wait_for_match(
+                            self.handle_guest_already_left(),
+                            self.handle_trade_failed(),
+                            self.handle_trade_complete(),
+                            timeout=30,
+                        )
+                    except TimeoutError:
+                        return TradeResponse.CRITICAL_FAILURE, "Trade failed due to an unexpected state."
 
             await self.b(wait_time=1000)
             await self.a(wait_time=1000)

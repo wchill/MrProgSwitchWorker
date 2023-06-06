@@ -47,11 +47,11 @@ if [[ ! -d "$HOME/venv" ]] ; then
   git clone https://github.com/wchill/BattleNetworkData
   git clone https://github.com/wchill/BattleNetworkAutomation
   git clone https://github.com/wchill/MrProgUtils
-  git clone https://github.com/wchill/MrProgSwitchWorker
+  git clone https://github.com/wchill/MrProgWorker
   "$HOME/venv/bin/python" -m pip install -e "$HOME/BattleNetworkData"
   "$HOME/venv/bin/python" -m pip install -e "$HOME/BattleNetworkAutomation"
   "$HOME/venv/bin/python" -m pip install -e "$HOME/MrProgUtils"
-  "$HOME/venv/bin/python" -m pip install -e "$HOME/MrProgSwitchWorker"
+  "$HOME/venv/bin/python" -m pip install -e "$HOME/MrProgWorker"
 fi
 
 echo "Writing udev rule for TC358743 HDMI module"

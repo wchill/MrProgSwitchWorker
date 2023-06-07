@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import platform
-import signal
 import sys
 
 import aio_pika
@@ -62,7 +61,7 @@ class TradeWorker:
         self._mqtt_connection_info = (host, username, password)
         self._mqtt_update_task = None
 
-        self.worker_id = hashlib.sha256(self.hostname.encode("utf-8")).hexdigest()
+        self.worker_id = hashlib.sha256(platform.node().encode("utf-8")).hexdigest()
         self.loop = asyncio.get_running_loop()
 
         self.cached_messages = {}
@@ -257,6 +256,10 @@ class TradeWorker:
                         routing_key=message.reply_to,
                     )
 
+                    await self.mqtt_client.publish(
+                        topic=f"worker/{self.worker_id}/current_trade", payload=response.request.to_bytes(), qos=1, retain=True
+                    )
+
                     room_code_future = asyncio.Future()
                     if isinstance(request.trade_item, Chip):
                         trade_completed = asyncio.create_task(self.trader.trade_chip(request, room_code_future))
@@ -352,6 +355,11 @@ class TradeWorker:
                 traceback.print_exc()
                 await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/enabled", payload=0, qos=1, retain=True)
                 await message.nack(requeue=True)
+            finally:
+                await self.mqtt_client.publish(
+                    topic=f"worker/{self.worker_id}/current_trade", payload=None, qos=1,
+                    retain=False
+                )
 
 
 def signal_handler(sig, frame, worker: TradeWorker):
@@ -391,6 +399,14 @@ async def init_steam_worker(game: int) -> AbstractAutoTrader:
     from nx.controller.sinks import WindowsNamedPipeSink
 
     from mrprog.worker.steam_auto_trader import SteamAutoTrader
+    from nx.automation import image_processing
+
+    if game in [1, 2, 3]:
+        image_processing.WIN_WINDOW_NAME = "MegaMan_BattleNetwork_LegacyCollection_Vol1"
+    else:
+        image_processing.WIN_WINDOW_NAME = "MegaMan_BattleNetwork_LegacyCollection_Vol2"
+
+    image_processing.capture()
 
     sink = WindowsNamedPipeSink()
     pipe = sink.connect_to_pipe()

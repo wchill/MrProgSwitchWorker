@@ -74,9 +74,11 @@ class TradeWorker:
     async def handle_mqtt_updates(self) -> None:
         game_enabled = False
         worker_enabled = False
+        trades_enabled = False
         self.should_consume_queue = False
 
         async with self.mqtt_client.messages() as messages:
+            await self.mqtt_client.subscribe("bot/enabled")
             await self.mqtt_client.subscribe(f"game/{self.system}/{self.game}/enabled")
             await self.mqtt_client.subscribe(f"worker/{self.worker_id}/enabled")
             async for message in messages:
@@ -85,9 +87,11 @@ class TradeWorker:
                     game_enabled = message.payload == b"1"
                 elif message.topic.matches(f"worker/{self.worker_id}/enabled"):
                     worker_enabled = message.payload == b"1"
+                elif message.topic.matches("bot/enabled"):
+                    trades_enabled = message.payload == b"1"
 
-                if self.should_consume_queue != (game_enabled and worker_enabled):
-                    self.should_consume_queue = game_enabled and worker_enabled
+                if self.should_consume_queue != (game_enabled and worker_enabled and trades_enabled):
+                    self.should_consume_queue = game_enabled and worker_enabled and trades_enabled
                     if not self.should_consume_queue:
                         logger.info("Disabling task queue")
                         await self.task_queue.cancel(consumer_tag=f"{self.worker_id}_taskqueue")
@@ -305,6 +309,42 @@ class TradeWorker:
                         await self.mqtt_client.publish(
                             topic=f"worker/{self.worker_id}/enabled", payload=0, qos=1, retain=True
                         )
+                        logger.warning(f"Attempting to restart worker")
+                        try:
+                            if await self.trader.reset():
+                                await self.mqtt_client.publish(
+                                    topic=f"worker/{self.worker_id}/enabled", payload=1, qos=1, retain=True
+                                )
+                            else:
+                                response = TradeResponse(
+                                    request,
+                                    self.worker_id,
+                                    trade_result,
+                                    message="Resetting failed. Worker requires attention.",
+                                )
+                                await self.trade_exchange.publish(
+                                    Message(
+                                        body=response.to_bytes(),
+                                        content_type="application/json",
+                                        correlation_id=message.correlation_id,
+                                    ),
+                                    routing_key=message.reply_to,
+                                )
+                        except NotImplementedError:
+                            response = TradeResponse(
+                                request,
+                                self.worker_id,
+                                trade_result,
+                                message="Resetting not implemented. Worker requires attention.",
+                            )
+                            await self.trade_exchange.publish(
+                                Message(
+                                    body=response.to_bytes(),
+                                    content_type="application/json",
+                                    correlation_id=message.correlation_id,
+                                ),
+                                routing_key=message.reply_to,
+                            )
             except Exception as e:
                 logger.exception("Processing error for message %r", message)
                 import traceback
@@ -377,9 +417,6 @@ async def main():
     worker = TradeWorker(
         trader, args.hostname or platform.node(), args.host, args.username, args.password, args.platform, args.game
     )
-
-    signal.signal(signal.SIGINT, lambda sig, frame: signal_handler(sig, frame, worker))
-    signal.signal(signal.SIGTERM, lambda sig, frame: signal_handler(sig, frame, worker))
     await worker.run()
 
 

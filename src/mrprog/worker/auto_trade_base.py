@@ -148,7 +148,7 @@ class AbstractAutoTrader(Script, ABC):
         return result
 
     @abstractmethod
-    async def reload_save(self):
+    async def reset(self) -> bool:
         # TODO: Implement
         pass
 
@@ -333,13 +333,13 @@ class AbstractAutoTrader(Script, ABC):
                     await self.wait(500)
                     await self.a(wait_time=1000)
 
-                    result = await self.match(self.handle_guest_already_left())
+                    result = await self.match(self.handle_guest_already_left(), self.handle_communication_error())
                     if result is not None:
                         return result
 
                     await self.a()
 
-                    result = await self.match(self.handle_guest_already_left())
+                    result = await self.match(self.handle_guest_already_left(), self.handle_communication_error())
                     if result is not None:
                         return result
 
@@ -350,10 +350,14 @@ class AbstractAutoTrader(Script, ABC):
                             self.handle_guest_already_left(),
                             self.handle_trade_failed(),
                             self.handle_trade_complete(),
+                            self.handle_communication_error(),
                             timeout=30,
                         )
                     except TimeoutError:
-                        return TradeResponse.CRITICAL_FAILURE, "Trade failed due to an unexpected state."
+                        return (
+                            TradeResponse.CRITICAL_FAILURE,
+                            "Trade failed due to an unexpected state. Attempting to restart bot.",
+                        )
 
             await self.b(wait_time=1000)
             await self.a(wait_time=1000)

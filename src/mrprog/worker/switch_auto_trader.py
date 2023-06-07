@@ -2,7 +2,7 @@ from mrprog.worker.auto_trade_base import AbstractAutoTrader
 
 
 class SwitchAutoTrader(AbstractAutoTrader):
-    async def reload_save(self):
+    async def reset(self) -> bool:
         # Home screen
         await self.home(wait_time=1000)
 
@@ -48,3 +48,5 @@ class SwitchAutoTrader(AbstractAutoTrader):
         await self.up()
         await self.up(wait_time=500)
         await self.a(wait_time=3000)
+
+        return await self.wait_for_text(lambda ocr_text: ocr_text == "NETWORK", (55, 65), (225, 50), 10)

@@ -108,7 +108,7 @@ class TradeWorker:
                 logger.info("Attempting to acquire trade lock")
                 async with self.trade_lock:
                     logger.info("Reloading save")
-                    await self.trader.reload_save()
+                    await self.trader.reset()
                     logger.info("Save reloaded")
                 return
             inputs = decoded_msg.split(",")
@@ -360,15 +360,6 @@ class TradeWorker:
                     topic=f"worker/{self.worker_id}/current_trade", payload=None, qos=1,
                     retain=False
                 )
-
-
-def signal_handler(sig, frame, worker: TradeWorker):
-    logger.warning(f"Received {sig} {frame}, waiting for trade lock...")
-    loop = asyncio.get_running_loop()
-    fut = asyncio.run_coroutine_threadsafe(worker.trade_lock.acquire(), loop)
-    fut.result()
-    logger.warning("Exiting due to signal")
-    exit(0)
 
 
 async def init_switch_worker(game: int) -> AbstractAutoTrader:

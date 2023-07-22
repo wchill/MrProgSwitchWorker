@@ -61,7 +61,7 @@ class TradeWorker:
         self._mqtt_connection_info = (host, username, password)
         self._mqtt_update_task = None
 
-        self.worker_id = hashlib.sha256(platform.node().encode("utf-8")).hexdigest()
+        self.worker_id = hashlib.sha256(hostname.encode("utf-8")).hexdigest()
         self.loop = asyncio.get_running_loop()
 
         self.cached_messages = {}
@@ -387,23 +387,8 @@ async def init_switch_worker(game: int) -> AbstractAutoTrader:
 
 
 async def init_steam_worker(game: int) -> AbstractAutoTrader:
-    from nx.controller.sinks import WindowsNamedPipeSink
-
     from mrprog.worker.steam_auto_trader import SteamAutoTrader
-    from nx.automation import image_processing
-
-    if game in [1, 2, 3]:
-        image_processing.WIN_WINDOW_NAME = "MegaMan_BattleNetwork_LegacyCollection_Vol1"
-    else:
-        image_processing.WIN_WINDOW_NAME = "MegaMan_BattleNetwork_LegacyCollection_Vol2"
-
-    image_processing.capture()
-
-    sink = WindowsNamedPipeSink()
-    pipe = sink.connect_to_pipe()
-    controller = Controller(pipe)
-
-    return SteamAutoTrader(controller, game)
+    return await SteamAutoTrader.create(game)
 
 
 async def main():

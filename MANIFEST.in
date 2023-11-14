@@ -1,1 +1,2 @@
 include src/mrprog/worker/saves/*
+include src/mrprog/worker/support_files/*

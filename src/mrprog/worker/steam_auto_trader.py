@@ -1,4 +1,5 @@
 import asyncio
+import importlib.resources
 import os
 import pkgutil
 import signal
@@ -22,6 +23,8 @@ class SteamAutoTrader(AbstractAutoTrader):
 
     @classmethod
     async def create(cls, game: int) -> "SteamAutoTrader":
+        cls.install_specialk_config()
+
         sink, process_exists = await cls._init_sink(game)
         trader = cls(sink, game)
         if process_exists:
@@ -51,6 +54,21 @@ class SteamAutoTrader(AbstractAutoTrader):
         return sink.connect_to_pipe()
 
     @classmethod
+    def install_specialk_config(cls) -> None:
+        config_template = importlib.resources.files("mrprog.worker").joinpath("support_files/custom_SpecialK.ini").read_text()
+        config_file = config_template.format(dll_path=importlib.resources.files("mrprog.worker").joinpath("support_files/XInputReportInjector.dll").name)
+        appdata = os.getenv('LOCALAPPDATA')
+        profile_dir = os.path.join(appdata, "Programs", "Special K", "Profiles")
+
+        for vol in ["1", "2"]:
+            for output_file in ["custom_SpecialK.ini", "custom_dxgi.ini"]:
+                game_profile_dir = os.path.join(profile_dir, f"Mega Man Battle Network Legacy Collection Vol {vol}")
+                output_path = os.path.join(game_profile_dir, output_file)
+                with open(output_path, "w") as f:
+                    f.write(config_file)
+                    print(f"Installed Special K config to {output_path}")
+
+    @classmethod
     def copy_exe3_save(cls, steamid_32: int) -> None:
         from windows.automation import steam
 
@@ -64,8 +82,10 @@ class SteamAutoTrader(AbstractAutoTrader):
             for i, b in enumerate(steam_id_bytes):
                 save_data[0xE0 + i] = b
 
-            with open(os.path.join(steam.get_vol1_save_directory(steamid_32), save_name), "wb") as f:
+            path = os.path.join(steam.get_vol1_save_directory(steamid_32), save_name)
+            with open(path, "wb") as f:
                 f.write(save_data)
+                print(f"Copied save to {path}")
 
     @classmethod
     def copy_exe6_save(cls, steamid_32: int) -> None:
@@ -84,11 +104,13 @@ class SteamAutoTrader(AbstractAutoTrader):
                 decrypted[6496 + i] = b
 
             encrypted_updated = cls.array_xor(decrypted, xor_byte)
-            with open(os.path.join(steam.get_vol1_save_directory(steamid_32), save_name), "wb") as f:
+            path = os.path.join(steam.get_vol1_save_directory(steamid_32), save_name)
+            with open(path, "wb") as f:
                 f.write(encrypted_updated)
+                print(f"Copied save to {path}")
 
     async def _navigate_menus_after_reset(self) -> bool:
-        for _ in range(60):
+        for _ in range(45):
             await self.a(wait_time=1000)
 
         # TODO: Wait for "PRESS + BUTTON"

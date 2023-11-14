@@ -1,19 +1,24 @@
 import asyncio
 import os
+import pkgutil
 import signal
 from typing import Tuple
 
-from mrprog.worker.auto_trade_base import AbstractAutoTrader
-from nx.controller import Controller
 from nx.automation import image_processing
-from nx.controller.sinks.windows_named_pipe_sink import PipeWrapper, WindowsNamedPipeSink
+from nx.controller import Controller
+from nx.controller.sinks.windows_named_pipe_sink import (
+    PipeWrapper,
+    WindowsNamedPipeSink,
+)
+
+from mrprog.worker.auto_trade_base import AbstractAutoTrader
 
 
 class SteamAutoTrader(AbstractAutoTrader):
     def __init__(self, pipe_wrapper: PipeWrapper, game: int):
-        controller = Controller(pipe_wrapper)
+        self.controller = Controller(pipe_wrapper)
         self.pipe_wrapper = pipe_wrapper
-        super().__init__(controller, game)
+        super().__init__(self.controller, game)
 
     @classmethod
     async def create(cls, game: int) -> "SteamAutoTrader":
@@ -28,9 +33,12 @@ class SteamAutoTrader(AbstractAutoTrader):
                 return trader
             raise RuntimeError("Unable to properly reset: did not end up in network menu.")
 
-    @staticmethod
-    async def _init_sink(game: int) -> Tuple[PipeWrapper, bool]:
+    @classmethod
+    async def _init_sink(cls, game: int) -> Tuple[PipeWrapper, bool]:
         from windows.automation import steam
+
+        steamid_32 = steam.get_logged_in_user_steamid32()
+        cls.copy_exe6_save(steamid_32)
 
         if game in [1, 2, 3]:
             image_processing.WIN_WINDOW_NAME = "MegaMan_BattleNetwork_LegacyCollection_Vol1"
@@ -41,6 +49,43 @@ class SteamAutoTrader(AbstractAutoTrader):
 
         sink = WindowsNamedPipeSink(process_name)
         return sink.connect_to_pipe()
+
+    @classmethod
+    def copy_exe3_save(cls, steamid_32: int) -> None:
+        from windows.automation import steam
+
+        steam_id_bytes = steamid_32.to_bytes(4, "little")
+
+        save_names = ["exe3w_save_0.bin"]
+
+        for save_name in save_names:
+            save_data = bytearray(pkgutil.get_data("mrprog.worker", f"saves/{save_name}"))
+
+            for i, b in enumerate(steam_id_bytes):
+                save_data[0xE0 + i] = b
+
+            with open(os.path.join(steam.get_vol1_save_directory(steamid_32), save_name), "wb") as f:
+                f.write(save_data)
+
+    @classmethod
+    def copy_exe6_save(cls, steamid_32: int) -> None:
+        from windows.automation import steam
+
+        steam_id_bytes = steamid_32.to_bytes(4, "little")
+
+        save_names = ["exe6f_save_0.bin", "exe6g_save_0.bin"]
+
+        for save_name in save_names:
+            encrypted = pkgutil.get_data("mrprog.worker", f"saves/{save_name}")
+            xor_byte = encrypted[1]
+            decrypted = cls.array_xor(encrypted, xor_byte)
+
+            for i, b in enumerate(steam_id_bytes):
+                decrypted[6496 + i] = b
+
+            encrypted_updated = cls.array_xor(decrypted, xor_byte)
+            with open(os.path.join(steam.get_vol1_save_directory(steamid_32), save_name), "wb") as f:
+                f.write(encrypted_updated)
 
     async def _navigate_menus_after_reset(self) -> bool:
         for _ in range(60):
@@ -72,3 +117,10 @@ class SteamAutoTrader(AbstractAutoTrader):
         self.pipe_wrapper = sink
         self.controller = Controller(sink)
         return await self._navigate_menus_after_reset()
+
+    @staticmethod
+    def array_xor(b1, xor):
+        result = bytearray(b1)
+        for i in range(len(b1)):
+            result[i] ^= xor
+        return result

@@ -70,6 +70,8 @@ class TradeWorker:
         self.trade_lock = asyncio.Lock()
         self.should_consume_queue = False
 
+        self.reset_count = 0
+
     async def handle_mqtt_updates(self) -> None:
         game_enabled = False
         worker_enabled = False
@@ -257,7 +259,10 @@ class TradeWorker:
                     )
 
                     await self.mqtt_client.publish(
-                        topic=f"worker/{self.worker_id}/current_trade", payload=response.request.to_bytes(), qos=1, retain=True
+                        topic=f"worker/{self.worker_id}/current_trade",
+                        payload=response.request.to_bytes(),
+                        qos=1,
+                        retain=True,
                     )
 
                     room_code_future = asyncio.Future()
@@ -303,17 +308,18 @@ class TradeWorker:
                     if trade_result in [TradeResponse.SUCCESS, TradeResponse.CANCELLED, TradeResponse.USER_TIMEOUT]:
                         logger.warning(f"Trade finished: {trade_result, trader_message}")
                         await message.ack()
+                        self.reset_count = 0
                     else:
                         logger.warning(f"Trade error: {trade_result, trader_message}")
                         await message.nack(requeue=True)
 
-                    if trade_result == TradeResponse.CRITICAL_FAILURE:
-                        logger.warning(f"Disabling worker: {trade_result, trader_message}")
-                        await self.mqtt_client.publish(
-                            topic=f"worker/{self.worker_id}/enabled", payload=0, qos=1, retain=True
-                        )
-                        logger.warning(f"Attempting to restart worker")
-                        try:
+                        if trade_result == TradeResponse.CRITICAL_FAILURE:
+                            logger.warning(f"Disabling worker: {trade_result, trader_message}")
+                            await self.mqtt_client.publish(
+                                topic=f"worker/{self.worker_id}/enabled", payload=0, qos=1, retain=True
+                            )
+                            logger.warning(f"Attempting to restart worker")
+                            self.reset_count += 1
                             if await self.trader.reset():
                                 await self.mqtt_client.publish(
                                     topic=f"worker/{self.worker_id}/enabled", payload=1, qos=1, retain=True
@@ -333,21 +339,6 @@ class TradeWorker:
                                     ),
                                     routing_key=message.reply_to,
                                 )
-                        except NotImplementedError:
-                            response = TradeResponse(
-                                request,
-                                self.worker_id,
-                                trade_result,
-                                message="Resetting not implemented. Worker requires attention.",
-                            )
-                            await self.trade_exchange.publish(
-                                Message(
-                                    body=response.to_bytes(),
-                                    content_type="application/json",
-                                    correlation_id=message.correlation_id,
-                                ),
-                                routing_key=message.reply_to,
-                            )
             except Exception as e:
                 logger.exception("Processing error for message %r", message)
                 import traceback
@@ -357,8 +348,7 @@ class TradeWorker:
                 await message.nack(requeue=True)
             finally:
                 await self.mqtt_client.publish(
-                    topic=f"worker/{self.worker_id}/current_trade", payload=None, qos=1,
-                    retain=False
+                    topic=f"worker/{self.worker_id}/current_trade", payload=None, qos=1, retain=False
                 )
 
 
@@ -388,6 +378,7 @@ async def init_switch_worker(game: int) -> AbstractAutoTrader:
 
 async def init_steam_worker(game: int) -> AbstractAutoTrader:
     from mrprog.worker.steam_auto_trader import SteamAutoTrader
+
     return await SteamAutoTrader.create(game)
 
 

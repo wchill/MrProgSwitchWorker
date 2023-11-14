@@ -356,7 +356,7 @@ class AbstractAutoTrader(Script, ABC):
                     except TimeoutError:
                         return (
                             TradeResponse.CRITICAL_FAILURE,
-                            "Trade failed due to an unexpected state. Attempting to restart bot.",
+                            "Trade failed due to an unexpected state.",
                         )
 
             await self.b(wait_time=1000)

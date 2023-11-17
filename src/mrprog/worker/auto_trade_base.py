@@ -149,7 +149,6 @@ class AbstractAutoTrader(Script, ABC):
 
     @abstractmethod
     async def reset(self) -> bool:
-        # TODO: Implement
         pass
 
     async def navigate_to_chip_trade_screen(self) -> bool:

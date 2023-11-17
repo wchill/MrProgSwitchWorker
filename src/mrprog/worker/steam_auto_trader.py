@@ -41,7 +41,15 @@ class SteamAutoTrader(AbstractAutoTrader):
         from windows.automation import steam
 
         steamid_32 = steam.get_logged_in_user_steamid32()
-        cls.copy_exe6_save(steamid_32)
+        save_dir_vol_1 = steam.get_vol1_save_directory(steamid_32)
+        save_dir_vol_2 = steam.get_vol2_save_directory(steamid_32)
+        os.makedirs(save_dir_vol_1, exist_ok=True)
+        os.makedirs(save_dir_vol_2, exist_ok=True)
+
+        if game == 3:
+            cls.copy_exe3_save(steamid_32, save_dir_vol_1)
+        elif game == 6:
+            cls.copy_exe6_save(steamid_32, save_dir_vol_2)
 
         if game in [1, 2, 3]:
             image_processing.WIN_WINDOW_NAME = "MegaMan_BattleNetwork_LegacyCollection_Vol1"
@@ -56,22 +64,23 @@ class SteamAutoTrader(AbstractAutoTrader):
     @classmethod
     def install_specialk_config(cls) -> None:
         config_template = importlib.resources.files("mrprog.worker").joinpath("support_files/custom_SpecialK.ini").read_text()
-        config_file = config_template.format(dll_path=importlib.resources.files("mrprog.worker").joinpath("support_files/XInputReportInjector.dll").name)
+        config_file = config_template.format(dll_path=str(importlib.resources.files("mrprog.worker").joinpath("support_files/XInputReportInjector.dll")))
         appdata = os.getenv('LOCALAPPDATA')
-        profile_dir = os.path.join(appdata, "Programs", "Special K", "Profiles")
+        profile_dir_1 = os.path.join(appdata, "Programs", "Special K", "Profiles")
+        profile_dir_2 = os.path.join("C:", "Program Files", "Special K", "Profiles")
 
         for vol in ["1", "2"]:
             for output_file in ["custom_SpecialK.ini", "custom_dxgi.ini"]:
-                game_profile_dir = os.path.join(profile_dir, f"Mega Man Battle Network Legacy Collection Vol {vol}")
-                output_path = os.path.join(game_profile_dir, output_file)
-                with open(output_path, "w") as f:
-                    f.write(config_file)
-                    print(f"Installed Special K config to {output_path}")
+                for profile_dir in [profile_dir_1, profile_dir_2]:
+                    game_profile_dir = os.path.join(profile_dir, f"Mega Man Battle Network Legacy Collection Vol {vol}")
+                    os.makedirs(game_profile_dir, exist_ok=True)
+                    output_path = os.path.join(game_profile_dir, output_file)
+                    with open(output_path, "w") as f:
+                        f.write(config_file)
+                        print(f"Installed Special K config to {output_path}")
 
     @classmethod
-    def copy_exe3_save(cls, steamid_32: int) -> None:
-        from windows.automation import steam
-
+    def copy_exe3_save(cls, steamid_32: int, output_dir: str) -> None:
         steam_id_bytes = steamid_32.to_bytes(4, "little")
 
         save_names = ["exe3w_save_0.bin"]
@@ -79,18 +88,18 @@ class SteamAutoTrader(AbstractAutoTrader):
         for save_name in save_names:
             save_data = bytearray(pkgutil.get_data("mrprog.worker", f"saves/{save_name}"))
 
+            print(f"Loaded save with SteamID {int.from_bytes(save_data[0xE0:0xE4], 'little')}")
+
             for i, b in enumerate(steam_id_bytes):
                 save_data[0xE0 + i] = b
 
-            path = os.path.join(steam.get_vol1_save_directory(steamid_32), save_name)
+            path = os.path.join(output_dir, save_name)
             with open(path, "wb") as f:
                 f.write(save_data)
                 print(f"Copied save to {path}")
 
     @classmethod
-    def copy_exe6_save(cls, steamid_32: int) -> None:
-        from windows.automation import steam
-
+    def copy_exe6_save(cls, steamid_32: int, output_dir: str) -> None:
         steam_id_bytes = steamid_32.to_bytes(4, "little")
 
         save_names = ["exe6f_save_0.bin", "exe6g_save_0.bin"]
@@ -100,11 +109,14 @@ class SteamAutoTrader(AbstractAutoTrader):
             xor_byte = encrypted[1]
             decrypted = cls.array_xor(encrypted, xor_byte)
 
+            print(f"Loaded save with SteamID {int.from_bytes(decrypted[6496:6500], 'little')}")
+
             for i, b in enumerate(steam_id_bytes):
                 decrypted[6496 + i] = b
 
             encrypted_updated = cls.array_xor(decrypted, xor_byte)
-            path = os.path.join(steam.get_vol1_save_directory(steamid_32), save_name)
+
+            path = os.path.join(output_dir, save_name)
             with open(path, "wb") as f:
                 f.write(encrypted_updated)
                 print(f"Copied save to {path}")

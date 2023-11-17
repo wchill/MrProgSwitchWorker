@@ -172,7 +172,7 @@ class AbstractAutoTrader(Script, ABC):
         await self.a()
 
         logger.debug("Waiting for chip select")
-        return await self.wait_for_text(lambda ocr_text: ocr_text == "Sort : ID", (1054, 205), (162, 48), 10)
+        return await self.wait_for_text(lambda ocr_text: ocr_text == "Sort : ID", (1054, 205), (162, 48), 20)
 
     async def navigate_to_ncp_trade_screen(self) -> bool:
         # navigate to trade screen
@@ -196,7 +196,7 @@ class AbstractAutoTrader(Script, ABC):
 
         logger.info("Waiting for ncp select")
         return await self.wait_for_text(
-            lambda ocr_text: ocr_text == STARTING_NCP[self.game], (1080, 270), (200, 60), timeout=10, invert=False
+            lambda ocr_text: ocr_text == STARTING_NCP[self.game], (1080, 270), (200, 60), timeout=20, invert=False
         )
 
     """

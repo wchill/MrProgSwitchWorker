@@ -73,6 +73,7 @@ class TradeWorker:
         self.reset_count = 0
 
     async def handle_mqtt_updates(self) -> None:
+        bot_available = False
         game_enabled = False
         worker_enabled = False
         trades_enabled = False
@@ -80,19 +81,23 @@ class TradeWorker:
 
         async with self.mqtt_client.messages() as messages:
             await self.mqtt_client.subscribe("bot/enabled")
+            await self.mqtt_client.subscribe("bot/available")
             await self.mqtt_client.subscribe(f"game/{self.system}/{self.game}/enabled")
             await self.mqtt_client.subscribe(f"worker/{self.worker_id}/enabled")
             async for message in messages:
                 self.cached_messages[message.topic] = message.payload
-                if message.topic.matches(f"game/{self.system}/{self.game}/enabled"):
+                if message.topic.matches("bot/available"):
+                    bot_available = message.payload == b"1"
+                elif message.topic.matches(f"game/{self.system}/{self.game}/enabled"):
                     game_enabled = message.payload == b"1"
                 elif message.topic.matches(f"worker/{self.worker_id}/enabled"):
                     worker_enabled = message.payload == b"1"
                 elif message.topic.matches("bot/enabled"):
                     trades_enabled = message.payload == b"1"
 
-                if self.should_consume_queue != (game_enabled and worker_enabled and trades_enabled):
-                    self.should_consume_queue = game_enabled and worker_enabled and trades_enabled
+                should_consume_queue = (bot_available and game_enabled and worker_enabled and trades_enabled)
+                if self.should_consume_queue != should_consume_queue:
+                    self.should_consume_queue = should_consume_queue
                     if not self.should_consume_queue:
                         logger.info("Disabling task queue")
                         await self.task_queue.cancel(consumer_tag=f"{self.worker_id}_taskqueue")
@@ -157,6 +162,12 @@ class TradeWorker:
         git_versions = await shell.get_git_versions()
         await self.mqtt_client.publish(
             topic=f"worker/{self.worker_id}/version", payload=json.dumps(git_versions), qos=1, retain=True
+        )
+        await self.mqtt_client.publish(
+            topic=f"worker/{self.worker_id}/current_trade",
+            payload=None,
+            qos=1,
+            retain=True,
         )
         await self.mqtt_client.publish(topic=f"worker/{self.worker_id}/available", payload="1", qos=1, retain=True)
 
@@ -262,7 +273,7 @@ class TradeWorker:
                         topic=f"worker/{self.worker_id}/current_trade",
                         payload=response.request.to_bytes(),
                         qos=1,
-                        retain=True,
+                        retain=False,
                     )
 
                     room_code_future = asyncio.Future()
@@ -386,9 +397,9 @@ async def main():
     trader_init_functions = {"switch": init_switch_worker, "steam": init_steam_worker}
 
     parser = argparse.ArgumentParser(prog="Mr. Prog Trade Worker", description="Trade worker process for Mr. Prog")
-    parser.add_argument("--host", required=True)  # positional argument
-    parser.add_argument("--username", required=True)  # option that takes a value
-    parser.add_argument("--password", required=True)
+    parser.add_argument("--host", required=True)
+    parser.add_argument("--username", required=False)
+    parser.add_argument("--password", required=False)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--game", type=int, required=True)
     parser.add_argument("--hostname", required=False)
@@ -398,7 +409,7 @@ async def main():
 
     trader = await trader_init_functions[args.platform](args.game)
     worker = TradeWorker(
-        trader, args.hostname or platform.node(), args.host, args.username, args.password, args.platform, args.game
+        trader, args.hostname or f"{args.platform}-worker-bn{args.game}", args.host, args.username or "worker", args.password or "worker", args.platform, args.game
     )
     await worker.run()
 

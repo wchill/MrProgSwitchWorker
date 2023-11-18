@@ -3,7 +3,7 @@ import importlib.resources
 import os
 import pkgutil
 import signal
-from typing import Tuple
+from typing import Tuple, List, Optional, Callable
 
 from nx.automation import image_processing
 from nx.controller import Controller
@@ -46,8 +46,16 @@ class SteamAutoTrader(AbstractAutoTrader):
         os.makedirs(save_dir_vol_1, exist_ok=True)
         os.makedirs(save_dir_vol_2, exist_ok=True)
 
-        if game == 3:
+        if game == 1:
+            cls.copy_exe1_save(steamid_32, save_dir_vol_1)
+        elif game == 2:
+            cls.copy_exe2_save(steamid_32, save_dir_vol_1)
+        elif game == 3:
             cls.copy_exe3_save(steamid_32, save_dir_vol_1)
+        elif game == 4:
+            cls.copy_exe4_save(steamid_32, save_dir_vol_2)
+        elif game == 5:
+            cls.copy_exe5_save(steamid_32, save_dir_vol_2)
         elif game == 6:
             cls.copy_exe6_save(steamid_32, save_dir_vol_2)
 
@@ -80,46 +88,60 @@ class SteamAutoTrader(AbstractAutoTrader):
                         print(f"Installed Special K config to {output_path}")
 
     @classmethod
+    def copy_exe1_save(cls, steamid_32: int, output_dir: str) -> None:
+        cls.copy_save(steamid_32, output_dir, ["exe1_save_0.bin"], None, lambda _: 0xBC)
+
+    @classmethod
+    def copy_exe2_save(cls, steamid_32: int, output_dir: str) -> None:
+        cls.copy_save(steamid_32, output_dir, ["exe2j_save_0.bin"], None, lambda _: 0x104)
+
+    @classmethod
     def copy_exe3_save(cls, steamid_32: int, output_dir: str) -> None:
-        steam_id_bytes = steamid_32.to_bytes(4, "little")
+        cls.copy_save(steamid_32, output_dir, ["exe3w_save_0.bin", "exe3b_save_0.bin"], None, lambda _: 0xE0)
 
-        save_names = ["exe3w_save_0.bin"]
+    @classmethod
+    def copy_exe4_save(cls, steamid_32: int, output_dir: str) -> None:
+        cls.copy_save(steamid_32, output_dir, ["exe4r_save_0.bin", "exe4b_save_0.bin"], 1, lambda save_data: save_data.index(b"Exe4") + 12)
 
-        for save_name in save_names:
-            save_data = bytearray(pkgutil.get_data("mrprog.worker", f"saves/{save_name}"))
-
-            print(f"Loaded save with SteamID {int.from_bytes(save_data[0xE0:0xE4], 'little')}")
-
-            for i, b in enumerate(steam_id_bytes):
-                save_data[0xE0 + i] = b
-
-            path = os.path.join(output_dir, save_name)
-            with open(path, "wb") as f:
-                f.write(save_data)
-                print(f"Copied save to {path}")
+    @classmethod
+    def copy_exe5_save(cls, steamid_32: int, output_dir: str) -> None:
+        cls.copy_save(steamid_32, output_dir, ["exe5b_save_0.bin", "exe5k_save_0.bin"], 1, lambda _: 0x1FC0)
 
     @classmethod
     def copy_exe6_save(cls, steamid_32: int, output_dir: str) -> None:
+        cls.copy_save(steamid_32, output_dir, ["exe6f_save_0.bin", "exe6g_save_0.bin"], 1, lambda _: 0x1960)
+
+    @classmethod
+    def copy_save(cls, steamid_32: int, output_dir: str, save_names: List[str], xor_byte_offset: Optional[int], id_offset_func: Callable[[bytes], int]) -> None:
         steam_id_bytes = steamid_32.to_bytes(4, "little")
 
-        save_names = ["exe6f_save_0.bin", "exe6g_save_0.bin"]
-
         for save_name in save_names:
-            encrypted = pkgutil.get_data("mrprog.worker", f"saves/{save_name}")
-            xor_byte = encrypted[1]
-            decrypted = cls.array_xor(encrypted, xor_byte)
+            try:
+                encrypted = pkgutil.get_data("mrprog.worker", f"saves/{save_name}")
 
-            print(f"Loaded save with SteamID {int.from_bytes(decrypted[6496:6500], 'little')}")
+                if xor_byte_offset is None:
+                    xor_byte = 0
+                else:
+                    xor_byte = encrypted[xor_byte_offset]
 
-            for i, b in enumerate(steam_id_bytes):
-                decrypted[6496 + i] = b
+                print(f"xor byte {xor_byte}")
+                decrypted = cls.array_xor(encrypted, xor_byte)
 
-            encrypted_updated = cls.array_xor(decrypted, xor_byte)
+                id_offset = id_offset_func(decrypted)
+                print(f"Using ID offset: {hex(id_offset)}")
+                print(f"Loaded save with SteamID {int.from_bytes(decrypted[id_offset:id_offset+4], 'little')}")
 
-            path = os.path.join(output_dir, save_name)
-            with open(path, "wb") as f:
-                f.write(encrypted_updated)
-                print(f"Copied save to {path}")
+                for i, b in enumerate(steam_id_bytes):
+                    decrypted[id_offset + i] = b
+
+                encrypted_updated = cls.array_xor(decrypted, xor_byte)
+
+                path = os.path.join(output_dir, save_name)
+                with open(path, "wb") as f:
+                    f.write(encrypted_updated)
+                    print(f"Copied save with SteamID {steamid_32} to {path}")
+            except FileNotFoundError:
+                pass
 
     async def _navigate_menus_after_reset(self) -> bool:
         for _ in range(45):

@@ -7,7 +7,6 @@ import time
 from abc import ABC, abstractmethod
 from queue import Queue
 from typing import (
-    Any,
     Awaitable,
     Callable,
     Dict,
@@ -19,10 +18,10 @@ from typing import (
     Union,
 )
 
-from mmbn.gamedata.bn3 import bn3_chip_list, bn3_ncp_list
-from mmbn.gamedata.bn6 import bn6_chip_list, bn6_ncp_list
 from mmbn.gamedata.chip import Chip, Sort
+from mmbn.gamedata.chip_list import ChipList
 from mmbn.gamedata.navicust_part import NaviCustPart
+from mmbn.gamedata.ncp_list import NcpList
 from mrprog.utils.trade import TradeRequest, TradeResponse
 from nx.automation import image_processing
 from nx.automation.script import MatchArgs, Script
@@ -31,10 +30,7 @@ from nx.controller import Button, Controller, DPad
 T = TypeVar("T")
 logger = logging.getLogger(__file__)
 
-
-MODULES: Dict[int, Any] = {3: (bn3_chip_list, bn3_ncp_list), 6: (bn6_chip_list, bn6_ncp_list)}
-
-STARTING_NCP = {3: "SprArmor", 6: "SuprArmr"}
+STARTING_NCP = {3: "SprArmor", 4: "SprArmr", 5: "SprArmr", 6: "SuprArmr"}
 
 
 class Node(Generic[T]):
@@ -52,21 +48,21 @@ class Node(Generic[T]):
     def __hash__(self) -> int:
         return hash(self.obj)
 
-    def search(self, target: T) -> List[Tuple[Union[Button, DPad], "Node[T]"]]:
+    def search(self, target: T) -> Tuple[List[Union[Button, DPad]], List[Node[T]]]:
         if self.obj == target:
-            return []
+            return [], []
 
         visited = set()
         q: Queue[Tuple[Node[T], List[Union[Button, DPad]], List[Node[T]]]] = Queue()
         q.put((self, [], []))
         visited.add(self)
 
-        shortest = None
+        shortest: Optional[Tuple[List[Union[Button, DPad]], List[Node[T]]]] = None
 
         while not q.empty():
             node, path, visited_nodes = q.get()
             if node.obj == target and (shortest is None or len(shortest) > len(path)):
-                shortest = list(zip(path, visited_nodes))
+                shortest = path, visited_nodes
             for controller_input, neighbor in node.neighbors.items():
                 if neighbor not in visited:
                     visited.add(neighbor)
@@ -106,14 +102,11 @@ class AbstractAutoTrader(Script, ABC):
     def __init__(self, controller: Controller, game: int):
         super().__init__(controller)
         self.game = game
+        chip_list = ChipList(game)
+        ncp_list = NcpList(game)
 
-        chip_list, ncp_list = MODULES[game]
-        ncp_nothing = ncp_list.NOTHING
-        all_parts = ncp_list.TRADABLE_PARTS
-        tradable_chip_order = chip_list.TRADABLE_CHIP_ORDER
-
-        self.root_chip_node = self.build_all_chip_input_graphs(tradable_chip_order)
-        self.root_ncp_node = self.build_ncp_input_graph(all_parts, ncp_nothing)
+        self.root_chip_node = self.build_all_chip_input_graphs(chip_list.tradable_chip_order)
+        self.root_ncp_node = self.build_ncp_input_graph(ncp_list.all_parts, ncp_list._nothing_part)
 
     @staticmethod
     def build_all_chip_input_graphs(tradable_chip_order) -> Node[Chip]:
@@ -140,10 +133,10 @@ class AbstractAutoTrader(Script, ABC):
         ncp_graph = build_input_graph(ncp_list + [ncp_nothing])
         return ncp_graph[0]
 
-    def calculate_chip_inputs(self, chip: Chip) -> List[Tuple[Union[Button, DPad], Node[Chip]]]:
+    def calculate_chip_inputs(self, chip: Chip) -> Tuple[List[Union[Button, DPad]], List[Node[Chip]]]:
         return self.root_chip_node.search(chip)
 
-    def calculate_ncp_inputs(self, ncp: NaviCustPart) -> List[Tuple[Union[Button, DPad], Node[NaviCustPart]]]:
+    def calculate_ncp_inputs(self, ncp: NaviCustPart) -> Tuple[List[Union[Button, DPad]], List[Node[NaviCustPart]]]:
         result = self.root_ncp_node.search(ncp)
         return result
 
@@ -268,7 +261,7 @@ class AbstractAutoTrader(Script, ABC):
         self,
         trade_request: TradeRequest,
         navigate_func: Callable[[], Awaitable[bool]],
-        input_tuples: List[Tuple[Union[Button, DPad], Node[T]]],
+        input_lists: Tuple[List[Union[Button, DPad]], List[Node[T]]],
         room_code_future: asyncio.Future,
     ) -> Tuple[int, Optional[str]]:
         try:
@@ -279,7 +272,7 @@ class AbstractAutoTrader(Script, ABC):
                 room_code_future.cancel()
                 return TradeResponse.CRITICAL_FAILURE, "Unable to open trade screen."
 
-            for controller_input, selected_chip in input_tuples:
+            for controller_input, selected_chip in zip(*input_lists):
                 if isinstance(controller_input, DPad):
                     self.controller.press_dpad(controller_input)
                 else:

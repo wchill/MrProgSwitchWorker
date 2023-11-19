@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from unittest.mock import MagicMock
 
 from mock_auto_trader import MockAutoTrader
@@ -20,9 +21,12 @@ class TestTradeWorker:
         room_code_future = asyncio.Future()
 
         trade_completed = asyncio.create_task(trader.trade_chip(request, room_code_future))
-        image_bytestring = await room_code_future
-        assert image_bytestring is not None
+        try:
+            image_bytestring = await room_code_future
+            assert image_bytestring is not None
+        except asyncio.CancelledError:
+            logging.warning("Room code future cancelled")
 
         trade_result, trader_message = await trade_completed
 
-        assert trade_result == TradeResponse.SUCCESS
+        assert trade_result == TradeResponse.SUCCESS, trader_message

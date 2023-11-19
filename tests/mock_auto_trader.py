@@ -1,6 +1,9 @@
 from typing import Callable, Tuple, Optional
 from unittest.mock import MagicMock
 
+from mmbn.gamedata.chip import Sort
+from mmbn.gamedata.chip_list import ChipList
+from mmbn.gamedata.ncp_list import NcpList
 from mrprog.utils.trade import TradeResponse
 from mrprog.worker.auto_trade_base import AbstractAutoTrader
 from nx.automation.script import MatchArgs

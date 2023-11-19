@@ -31,13 +31,14 @@ class SteamAutoTrader(AbstractAutoTrader):
             print("Process already exists, skipping navigation")
             return trader
         else:
+            cls.copy_saves(game)
             print("Attempting to navigate menus")
             if await trader._navigate_menus_after_reset():
                 return trader
             raise RuntimeError("Unable to properly reset: did not end up in network menu.")
 
     @classmethod
-    async def _init_sink(cls, game: int) -> Tuple[PipeWrapper, bool]:
+    def copy_saves(cls, game: int):
         from windows.automation import steam
 
         steamid_32 = steam.get_logged_in_user_steamid32()
@@ -59,6 +60,10 @@ class SteamAutoTrader(AbstractAutoTrader):
         elif game == 6:
             cls.copy_exe6_save(steamid_32, save_dir_vol_2)
 
+    @classmethod
+    async def _init_sink(cls, game: int) -> Tuple[PipeWrapper, bool]:
+        from windows.automation import steam
+
         if game in [1, 2, 3]:
             image_processing.WIN_WINDOW_NAME = "MegaMan_BattleNetwork_LegacyCollection_Vol1"
             process_name = steam.get_vol1_exe_path()
@@ -75,17 +80,20 @@ class SteamAutoTrader(AbstractAutoTrader):
         config_file = config_template.format(dll_path=str(importlib.resources.files("mrprog.worker").joinpath("support_files/XInputReportInjector.dll")))
         appdata = os.getenv('LOCALAPPDATA')
         profile_dir_1 = os.path.join(appdata, "Programs", "Special K", "Profiles")
-        profile_dir_2 = os.path.join("C:", "Program Files", "Special K", "Profiles")
+        profile_dir_2 = os.path.join("C:/", "Program Files", "Special K", "Profiles")
 
         for vol in ["1", "2"]:
             for output_file in ["custom_SpecialK.ini", "custom_dxgi.ini"]:
                 for profile_dir in [profile_dir_1, profile_dir_2]:
                     game_profile_dir = os.path.join(profile_dir, f"Mega Man Battle Network Legacy Collection Vol {vol}")
-                    os.makedirs(game_profile_dir, exist_ok=True)
-                    output_path = os.path.join(game_profile_dir, output_file)
-                    with open(output_path, "w") as f:
-                        f.write(config_file)
-                        print(f"Installed Special K config to {output_path}")
+                    try:
+                        os.makedirs(game_profile_dir, exist_ok=True)
+                        output_path = os.path.join(game_profile_dir, output_file)
+                        with open(output_path, "w") as f:
+                            f.write(config_file)
+                            print(f"Installed Special K config to {output_path}")
+                    except PermissionError:
+                        pass
 
     @classmethod
     def copy_exe1_save(cls, steamid_32: int, output_dir: str) -> None:

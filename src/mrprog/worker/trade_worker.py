@@ -31,8 +31,6 @@ from mrprog.worker.auto_trade_base import AbstractAutoTrader
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_GAMES = {"switch": [3, 6], "steam": [6]}
-
 
 # noinspection PyTypeChecker
 class TradeWorker:

@@ -10,3 +10,5 @@ python -m virtualenv venv
 . venv/Scripts/activate.ps1
 
 pip install -e BattleNetworkAutomation -e BattleNetworkData -e MrProgUtils -e MrProgWorker
+
+# Also need to install tesseract, add C:\Program Files\Tesseract-OCR to path

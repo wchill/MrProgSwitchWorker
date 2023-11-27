@@ -152,12 +152,16 @@ class SteamAutoTrader(AbstractAutoTrader):
                 pass
 
     async def _navigate_menus_after_reset(self) -> bool:
-        for _ in range(45):
+        for _ in range(40):
             await self.a(wait_time=1000)
 
         # TODO: Wait for "PRESS + BUTTON"
         await self.plus(wait_time=500)
         await self.a(wait_time=5000)
+
+        # Handle the "continue/start new game" prompt in 4
+        if self.game == 4:
+            await self.a(wait_time=5000)
 
         await self.plus(wait_time=1000)
         await self.up()

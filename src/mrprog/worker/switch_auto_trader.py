@@ -37,12 +37,16 @@ class SwitchAutoTrader(AbstractAutoTrader):
         await self.a()
 
         # TODO: Wait for "PRESS ANY BUTTON"
-        for _ in range(60):
+        for _ in range(50):
             await self.a(wait_time=1000)
 
         # TODO: Wait for "PRESS + BUTTON"
         await self.plus(wait_time=500)
         await self.a(wait_time=5000)
+
+        # Handle the "continue/start new game" prompt in 4
+        if self.game == 4:
+            await self.a(wait_time=5000)
 
         await self.plus(wait_time=1000)
         await self.up()

@@ -106,7 +106,7 @@ class AbstractAutoTrader(Script, ABC):
         ncp_list = NcpList(game)
 
         self.root_chip_node = self.build_all_chip_input_graphs(chip_list.tradable_chip_order)
-        self.root_ncp_node = self.build_ncp_input_graph(ncp_list.all_parts, ncp_list._nothing_part)
+        self.root_ncp_node = self.build_ncp_input_graph(ncp_list.tradable_parts, ncp_list._nothing_part)
 
     @staticmethod
     def build_all_chip_input_graphs(tradable_chip_order) -> Node[Chip]:
